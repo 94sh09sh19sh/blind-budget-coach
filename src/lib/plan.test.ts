@@ -1,0 +1,248 @@
+import { describe, expect, it } from 'vitest'
+import { EXAMPLE_QUESTIONS, isoDate, matchByKeywords, patternToPlan, runPlan, validateChoice, validatePlan } from './plan'
+import { AskSession, MAX_CLOUD_CALLS, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, validateAdvice } from './cloudtasks'
+import type { Classified } from './aggregate'
+import type { CloudCall } from './ai'
+import type { TimelineEntry } from './router'
+
+const tx = (id: number, date: string, desc: string, amount: number, category: Classified['category']): Classified => ({ id, date, desc, amount, category })
+const DATA: Classified[] = [
+  tx(1, '2026-01-05', 'CITY FRESH GROCERY #1', -50, 'Groceries'),
+  tx(2, '2026-01-20', 'CITY FRESH GROCERY #2', -30, 'Groceries'),
+  tx(3, '2026-02-03', 'JOES DINER', -20, 'Dining'),
+  tx(4, '2026-02-10', 'JOES DINER', -40, 'Dining'),
+  tx(5, '2026-02-15', 'PAYROLL ACME', 1000, 'Income'),
+  tx(6, '2026-02-20', 'ONLINE TRANSFER', -200, 'Transfers'),
+  tx(7, '2/25/2026', 'MYSTERY SHOP', -10, null),
+]
+
+describe('validatePlan', () => {
+  it('接受合法計畫', () => {
+    const r = validatePlan({ filter: { categories: ['Dining'], dateFrom: '2026-01-01', dateTo: '2026-02-28', amountMin: 5, direction: 'spend' }, groupBy: 'month', aggregate: 'sum', sort: 'label_asc', limit: 5 })
+    expect(r.ok).toBe(true)
+  })
+  const bad: [string, unknown][] = [
+    ['非物件', 'drop table'],
+    ['陣列', []],
+    ['缺 aggregate', { groupBy: 'month' }],
+    ['aggregate 不在白名單', { aggregate: 'median' }],
+    ['未知頂層欄位', { aggregate: 'sum', sql: 'select 1' }],
+    ['未知 filter 欄位', { aggregate: 'sum', filter: { regex: '.*' } }],
+    ['groupBy 不合法', { aggregate: 'sum', groupBy: 'day' }],
+    ['類別不存在', { aggregate: 'sum', filter: { categories: ['Food'] } }],
+    ['類別空陣列', { aggregate: 'sum', filter: { categories: [] } }],
+    ['日期格式錯', { aggregate: 'sum', filter: { dateFrom: '1/2/2026' } }],
+    ['日期不存在', { aggregate: 'sum', filter: { dateFrom: '2026-02-30' } }],
+    ['起訖顛倒', { aggregate: 'sum', filter: { dateFrom: '2026-03-01', dateTo: '2026-01-01' } }],
+    ['金額負數', { aggregate: 'sum', filter: { amountMin: -1 } }],
+    ['金額上下界顛倒', { aggregate: 'sum', filter: { amountMin: 10, amountMax: 5 } }],
+    ['金額不是數字', { aggregate: 'sum', filter: { amountMin: '5' } }],
+    ['limit 太大', { aggregate: 'sum', limit: 500 }],
+    ['limit 非整數', { aggregate: 'sum', limit: 2.5 }],
+    ['sort 不合法', { aggregate: 'sum', sort: 'random' }],
+    ['direction 不合法', { aggregate: 'sum', filter: { direction: 'sideways' } }],
+    ['merchantContains 空字串', { aggregate: 'sum', filter: { merchantContains: '  ' } }],
+    ['merchantContains 太長', { aggregate: 'sum', filter: { merchantContains: 'x'.repeat(41) } }],
+  ]
+  it.each(bad)('拒絕：%s', (_n, x) => {
+    expect(validatePlan(x).ok).toBe(false)
+  })
+})
+
+describe('runPlan', () => {
+  it('預設只算支出，排除收入與轉帳', () => {
+    const r = runPlan({ aggregate: 'sum' }, DATA)
+    expect(r.rows[0].value).toBe(150) // 50+30+20+40+10
+    expect(r.matched).toBe(5)
+  })
+  it('依類別分組、排序、取前 N', () => {
+    const r = runPlan({ groupBy: 'category', aggregate: 'sum', sort: 'value_desc', limit: 2 }, DATA)
+    expect(r.rows.map((x) => x.label)).toEqual(['Groceries', 'Dining'])
+    expect(r.rows[0].value).toBe(80)
+  })
+  it('依月份分組，兩種日期格式', () => {
+    const r = runPlan({ groupBy: 'month', aggregate: 'sum' }, DATA)
+    expect(r.rows.map((x) => [x.label, x.value])).toEqual([['2026-01', 80], ['2026-02', 70]])
+  })
+  it('日期區間與店家字串', () => {
+    expect(runPlan({ filter: { dateFrom: '2026-02-01', dateTo: '2026-02-12' }, aggregate: 'count' }, DATA).rows[0].value).toBe(2)
+    expect(runPlan({ filter: { merchantContains: 'joes' }, aggregate: 'sum' }, DATA).rows[0].value).toBe(60)
+  })
+  it('金額區間用絕對值，avg 與 count', () => {
+    expect(runPlan({ filter: { amountMin: 30 }, aggregate: 'count' }, DATA).rows[0].value).toBe(3)
+    expect(runPlan({ filter: { categories: ['Dining'] }, aggregate: 'avg' }, DATA).rows[0].value).toBe(30)
+  })
+  it('direction income 與 all', () => {
+    expect(runPlan({ filter: { direction: 'income' }, aggregate: 'sum' }, DATA).rows[0].value).toBe(1000)
+    expect(runPlan({ filter: { direction: 'all' }, aggregate: 'count' }, DATA).rows[0].value).toBe(7)
+  })
+  it('沒有符合的列回 0', () => {
+    expect(runPlan({ filter: { merchantContains: 'zzz' }, aggregate: 'sum' }, DATA).rows).toEqual([{ label: 'Total', value: 0, count: 0 }])
+  })
+  it('isoDate', () => {
+    expect(isoDate('2/5/2026')).toBe('2026-02-05')
+    expect(isoDate('foo')).toBeNull()
+  })
+})
+
+describe('固定樣式', () => {
+  it('六個範例問題都能用關鍵字比對並產生合法計畫', () => {
+    expect(EXAMPLE_QUESTIONS).toHaveLength(6)
+    for (const q of EXAMPLE_QUESTIONS) {
+      const c = matchByKeywords(q)
+      expect(c, q).not.toBeNull()
+      const plan = patternToPlan(c!)
+      expect(plan, q).not.toBeNull()
+      expect(validatePlan(plan).ok, q).toBe(true)
+    }
+  })
+  it('範例問題各自對到不同樣式', () => {
+    expect(new Set(EXAMPLE_QUESTIONS.map((q) => matchByKeywords(q)!.pattern)).size).toBe(6)
+  })
+  it('關鍵字比對：金額、店家名稱、比不到', () => {
+    expect(matchByKeywords('how many purchases were above $250.50?')).toEqual({ pattern: 'count_over', amount: 250.5 })
+    expect(matchByKeywords('How much did I spend at Joes Diner?')).toEqual({ pattern: 'category_total', text: 'Joes Diner' })
+    expect(matchByKeywords('tell me a joke')).toBeNull()
+    expect(matchByKeywords('')).toBeNull()
+  })
+  it('validateChoice 拒絕不合法的選擇', () => {
+    expect(validateChoice({ pattern: 'category_total', category: 'Dining' })).not.toBeNull()
+    expect(validateChoice({ pattern: 'category_total' })).toBeNull() // 缺參數
+    expect(validateChoice({ pattern: 'drop_all' })).toBeNull()
+    expect(validateChoice({ pattern: 'count_over', amount: -5 })).toBeNull()
+    expect(validateChoice({ pattern: 'top_categories', extra: 1 })).toBeNull()
+    expect(validateChoice('top_categories')).toBeNull()
+  })
+})
+
+function mkDeps(over: Partial<Parameters<typeof askCloud>[1]> = {}) {
+  const logs: Omit<TimelineEntry, 'id' | 'at'>[] = []
+  return { logs, deps: { log: (e: Omit<TimelineEntry, 'id' | 'at'>) => { logs.push(e) }, now: () => 0, ...over } }
+}
+const GOOD = JSON.stringify({ groupBy: 'category', aggregate: 'sum', limit: 3 })
+const QUESTION = 'Which categories cost me the most last month?'
+const COLS = [{ name: 'Date', type: 'date' as const }, { name: 'Description', type: 'text' as const }, { name: 'Amount', type: 'number' as const }]
+
+describe('出境清單', () => {
+  const m = buildPlanManifest(QUESTION, COLS, '2026-11-12', 60)
+  it('只含問題、欄位名稱與型別、類別清單、今天日期', () => {
+    expect(m.prompt).toContain('Today: 2026-11-12')
+    expect(m.prompt).toContain('Date (date), Description (text), Amount (number)')
+    expect(m.prompt).toContain('Groceries')
+    expect(m.prompt).toContain(QUESTION)
+    expect(m.notIncluded).toBe('Not included: 60 transactions, merchants, dates, amounts')
+  })
+  it('位元組數是 UTF-8 長度', () => {
+    expect(m.bytes).toBe(new TextEncoder().encode(m.system + m.prompt).length)
+    const z = buildPlanManifest('咖啡花了多少', COLS, '2026-11-12', 1)
+    expect(z.bytes).toBeGreaterThan((z.system + z.prompt).length)
+  })
+  it('預算建議只含整數百分比', () => {
+    const shares = categoryShares({ Groceries: 80, Dining: 60, Shopping: 10 })
+    expect(Object.values(shares).reduce((a, b) => a + b, 0)).toBe(100)
+    const a = buildAdviceManifest(shares, 7)
+    expect(a.mode).toBe('ONLY_IN_CLOUD')
+    expect(a.prompt).toMatch(/Groceries: 53%/)
+    expect(a.prompt).not.toMatch(/\d\.\d/)
+  })
+})
+
+describe('askCloud', () => {
+  const m = buildPlanManifest(QUESTION, COLS, '2026-11-12', 60)
+  it('合法回應：採用、記入時間線與位元組', async () => {
+    const cloud: CloudCall = async () => ({ text: GOOD, source: 'cloud' })
+    const { deps, logs } = mkDeps({ cloud })
+    const r = await askCloud(new AskSession(), deps, QUESTION, m)
+    expect(r.source).toBe('cloud')
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toMatchObject({ mode: 'PREFER_IN_CLOUD', side: 'cloud', bytesSent: m.bytes })
+  })
+  it('第一次不合法、第二次合法：重試一次', async () => {
+    let n = 0
+    const cloud: CloudCall = async () => ({ text: n++ === 0 ? '{"aggregate":"median"}' : GOOD, source: 'cloud' })
+    const { deps, logs } = mkDeps({ cloud })
+    const s = new AskSession()
+    const r = await askCloud(s, deps, QUESTION, m)
+    expect(r.source).toBe('cloud')
+    expect(s.cloudCalls).toBe(2)
+    expect(logs).toHaveLength(2)
+  })
+  it('兩次都不合法：改用固定樣式（關鍵字）', async () => {
+    const cloud: CloudCall = async () => ({ text: 'not json', source: 'cloud' })
+    const { deps } = mkDeps({ cloud })
+    const s = new AskSession()
+    const r = await askCloud(s, deps, 'what are my top spending categories?', buildPlanManifest('what are my top spending categories?', COLS, '2026-11-12', 60))
+    expect(s.cloudCalls).toBe(2)
+    expect(r.source).toBe('rules')
+    expect(r.plan).not.toBeNull()
+  })
+  it('雲端丟錯：不重試，改用固定樣式；裝置端模型有就用它', async () => {
+    const cloud: CloudCall = async () => { throw new Error('offline') }
+    const { deps, logs } = mkDeps({ cloud, deviceChoose: async () => JSON.stringify({ pattern: 'monthly_spend' }) })
+    const s = new AskSession()
+    const r = await askCloud(s, deps, QUESTION, m)
+    expect(s.cloudCalls).toBe(1)
+    expect(r.source).toBe('device')
+    expect(logs.map((l) => l.mode)).toEqual(['PREFER_IN_CLOUD', 'ONLY_ON_DEVICE'])
+  })
+  it('同一問題快取：第二次不再呼叫', async () => {
+    let n = 0
+    const cloud: CloudCall = async () => { n++; return { text: GOOD, source: 'cloud' } }
+    const { deps } = mkDeps({ cloud })
+    const s = new AskSession()
+    await askCloud(s, deps, QUESTION, m)
+    const r = await askCloud(s, deps, '  which categories cost me the most last MONTH? ', m)
+    expect(n).toBe(1)
+    expect(r.cached).toBe(true)
+  })
+  it('每階段上限 10 次，超過就用固定樣式', async () => {
+    const cloud: CloudCall = async () => ({ text: GOOD, source: 'cloud' })
+    const { deps } = mkDeps({ cloud })
+    const s = new AskSession()
+    for (let i = 0; i < MAX_CLOUD_CALLS; i++) await askCloud(s, deps, `question number ${i} top categories`, m)
+    expect(s.cloudCalls).toBe(10)
+    const r = await askCloud(s, deps, 'one more top categories please', m)
+    expect(s.cloudCalls).toBe(10)
+    expect(r.source).toBe('rules')
+    expect(r.note).toMatch(/limit/)
+  })
+  it('沒有雲端函式：直接固定樣式', async () => {
+    const { deps, logs } = mkDeps()
+    const r = await askCloud(new AskSession(), deps, EXAMPLE_QUESTIONS[0], m)
+    expect(r.source).toBe('rules')
+    expect(logs.every((l) => l.bytesSent === 0)).toBe(true)
+  })
+  it('askFixed 比不到時回 none', async () => {
+    const { deps } = mkDeps()
+    const r = await askFixed(new AskSession(), deps, 'tell me a joke', 'x')
+    expect(r.plan).toBeNull()
+    expect(r.source).toBe('none')
+  })
+})
+
+describe('askAdvice', () => {
+  const tips = { tips: [1, 2, 3].map((i) => ({ title: `T${i}`, detail: `D${i}` })) }
+  const m = buildAdviceManifest({ Groceries: 60, Dining: 40 }, 10)
+  it('合法回應', async () => {
+    const { deps, logs } = mkDeps({ cloud: async () => ({ text: JSON.stringify(tips), source: 'cloud' }) })
+    const r = await askAdvice(new AskSession(), deps, m)
+    expect(r.ok).toBe(true)
+    expect(logs[0]).toMatchObject({ mode: 'ONLY_IN_CLOUD', bytesSent: m.bytes })
+  })
+  it('驗證失敗重試一次後回錯', async () => {
+    const { deps } = mkDeps({ cloud: async () => ({ text: '{"tips":[]}', source: 'cloud' }) })
+    const s = new AskSession()
+    const r = await askAdvice(s, deps, m)
+    expect(r.ok).toBe(false)
+    expect(s.cloudCalls).toBe(2)
+  })
+  it('沒有雲端函式：停用', async () => {
+    const { deps } = mkDeps()
+    expect((await askAdvice(new AskSession(), deps, m)).ok).toBe(false)
+  })
+  it('validateAdvice 只收剛好三條', () => {
+    expect(validateAdvice(tips)).not.toBeNull()
+    expect(validateAdvice({ tips: tips.tips.slice(0, 2) })).toBeNull()
+    expect(validateAdvice({ tips: [{ title: 1, detail: 'x' }, ...tips.tips.slice(0, 2)] })).toBeNull()
+  })
+})

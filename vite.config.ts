@@ -15,7 +15,7 @@ export default defineConfig({
         name: 'Blind Budget Coach',
         short_name: 'BudgetCoach',
         description: 'A budgeting coach that never sees your line items.',
-        theme_color: '#2f6fed',
+        theme_color: '#1d6a4c',
         background_color: '#ffffff',
         display: 'standalone',
         icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml' }],

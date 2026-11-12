@@ -32,3 +32,19 @@ export const saveLastRun = (r: LastRun) => safe(() => set(K_LAST, r), undefined)
 
 /** 清光所有本機資料（更正、時間線、最近一次結果）。 */
 export const eraseAll = () => safe(() => clear(), undefined)
+
+/** 出境帳本：每一次經同意的雲端請求一列，留下當時送出的原文，供介面點開核對。 */
+export interface LedgerEntry {
+  id: number
+  at: number
+  task: string
+  mode: string
+  bytes: number
+  system: string
+  prompt: string
+  schema: object
+  outcome: string
+}
+const K_LEDGER = 'ledger'
+export const loadLedger = () => safe(async () => (await get<LedgerEntry[]>(K_LEDGER)) ?? [], [] as LedgerEntry[])
+export const saveLedger = (l: LedgerEntry[]) => safe(() => set(K_LEDGER, l), undefined)

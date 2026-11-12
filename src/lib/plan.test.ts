@@ -246,3 +246,19 @@ describe('askAdvice', () => {
     expect(validateAdvice({ tips: [{ title: 1, detail: 'x' }, ...tips.tips.slice(0, 2)] })).toBeNull()
   })
 })
+
+import { CLOUD_CONFIGURED, PLACEHOLDER, firebaseConfig, isPlaceholderConfig } from '../firebase'
+import { firebaseCloudCall } from './ai'
+
+describe('雲端設定判斷', () => {
+  it('佔位值或空值都視為未設定', () => {
+    expect(isPlaceholderConfig(firebaseConfig)).toBe(true)
+    expect(isPlaceholderConfig({ a: 'x', b: PLACEHOLDER })).toBe(true)
+    expect(isPlaceholderConfig({ a: 'x', b: '' })).toBe(true)
+    expect(isPlaceholderConfig({ a: 'x', b: 'y' })).toBe(false)
+  })
+  it('佔位設定下真的雲端呼叫直接丟錯，不送請求', async () => {
+    expect(CLOUD_CONFIGURED).toBe(false)
+    await expect(firebaseCloudCall({ mode: 'ONLY_IN_CLOUD', system: 's', prompt: 'p', schema: {} })).rejects.toThrow(/not configured/)
+  })
+})

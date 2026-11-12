@@ -7,7 +7,7 @@ import type { Side, TimelineEntry } from './router'
 
 export interface ColumnInfo { name: string; type: 'date' | 'text' | 'number' }
 
-/** 出境清單：送出前原文列給使用者看；bytes 是將送出內容（system + prompt）的 UTF-8 位元組數。 */
+/** 出境清單：送出前原文列給使用者看；bytes 是將送出內容（system + prompt + 回應結構）的 UTF-8 位元組數，不含 HTTP 標頭與 SDK 的 JSON 外框。 */
 export interface Manifest {
   task: string
   mode: CloudMode
@@ -16,6 +16,16 @@ export interface Manifest {
   bytes: number
   notIncluded: string
   schema: object
+}
+
+/** 把雲端例外轉成使用者看得懂的短句，不顯示原始例外字串（可能含網址或設定）。 */
+export function describeCloudError(e: unknown): string {
+  const m = e instanceof Error ? e.message : ''
+  if (/429|quota|rate.?limit|resource.?exhausted/i.test(m)) return 'the free daily or per-minute limit was reached'
+  if (/app.?check|appcheck|401|403|permission|unauthenticated|api.?key/i.test(m)) return 'the request was refused (App Check or API key problem)'
+  if (/404|not found/i.test(m)) return 'the model was not found'
+  if (/network|fetch|offline|failed to load|timeout/i.test(m)) return 'the network request failed'
+  return 'an unexpected error'
 }
 
 export type LogFn = (e: Omit<TimelineEntry, 'id' | 'at'>) => void
@@ -31,7 +41,8 @@ Plan fields (all optional except aggregate):
 - aggregate: "sum", "count" or "avg"
 - sort: "value_desc", "value_asc" or "label_asc"
 - limit: integer 1 to 50 (top N)
-Use only these fields. Resolve relative dates such as "last month" using the given today's date.`
+Use only these fields. Resolve relative dates such as "last month" using the given today's date.
+If the question cannot be answered exactly with these fields (for example comparing two periods, percentage changes, forecasts, or anything that needs more than one query), do not approximate it with a different query. Return only {"unsupportedReason": "<one short sentence>"}.`
 
 export function buildPlanManifest(question: string, columns: ColumnInfo[], today: string, txCount: number): Manifest {
   const prompt = [
@@ -45,7 +56,7 @@ export function buildPlanManifest(question: string, columns: ColumnInfo[], today
     mode: 'PREFER_IN_CLOUD',
     system: PLAN_SYSTEM,
     prompt,
-    bytes: requestBytes(PLAN_SYSTEM, prompt),
+    bytes: requestBytes(PLAN_SYSTEM, prompt, PLAN_SCHEMA),
     notIncluded: `Not included: ${txCount} transactions, merchants, dates, amounts`,
     schema: PLAN_SCHEMA,
   }
@@ -58,6 +69,8 @@ export interface AskOutcome {
   source: 'cloud' | 'device' | 'rules' | 'none'
   note: string
   cached: boolean
+  /** 雲端明確回報超出能力範圍（此時不退回固定樣式，避免給出看似合理的錯數字） */
+  unsupported?: boolean
 }
 
 export const MAX_CLOUD_CALLS = 10
@@ -126,7 +139,12 @@ export async function askCloud(session: AskSession, deps: AskDeps, question: str
       side = r.source === 'device' ? 'device' : 'cloud'
       let v
       try { v = validatePlan(JSON.parse(r.text)) } catch { v = { ok: false as const, error: 'response was not valid JSON' } }
-      deps.log({ task: manifest.task, mode: manifest.mode, side, ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: v.ok ? 'Plan accepted.' : `Plan rejected (${v.error})${attempt === 0 ? '; retrying once' : ''}.` })
+      deps.log({ task: manifest.task, mode: manifest.mode, side, ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: !v.ok ? `Plan rejected (${v.error})${attempt === 0 ? '; retrying once' : ''}.` : v.plan ? 'Plan accepted.' : 'Question reported as out of scope.' })
+      if (v.ok && !v.plan) {
+        const out: AskOutcome = { plan: null, source: side === 'cloud' ? 'cloud' : 'device', note: `This question is outside what this app can answer exactly: ${v.unsupported} Try asking for one total, average, count or ranking at a time.`, cached: false, unsupported: true }
+        session.cache.set(key, out)
+        return out
+      }
       if (v.ok) {
         const out: AskOutcome = { plan: v.plan, source: side === 'cloud' ? 'cloud' : 'device', note: side === 'cloud' ? 'Query plan written by the cloud model; executed locally.' : 'Cloud unreachable; the on-device model wrote the plan.', cached: false }
         session.cache.set(key, out)
@@ -134,8 +152,8 @@ export async function askCloud(session: AskSession, deps: AskDeps, question: str
       }
       why = `The plan was invalid (${v.error}); using a fixed pattern.`
     } catch (e) {
-      deps.log({ task: manifest.task, mode: manifest.mode, side: 'cloud', ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: `Call failed (${e instanceof Error ? e.message : 'error'}).` })
-      why = 'The cloud call failed; using a fixed pattern.'
+      deps.log({ task: manifest.task, mode: manifest.mode, side: 'cloud', ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: `Call failed: ${describeCloudError(e)}.` })
+      why = `The cloud call failed (${describeCloudError(e)}); using a fixed pattern.`
       break
     }
   }
@@ -198,7 +216,7 @@ export function buildAdviceManifest(shares: Record<string, number>, txCount: num
     mode: 'ONLY_IN_CLOUD',
     system: ADVICE_SYSTEM,
     prompt,
-    bytes: requestBytes(ADVICE_SYSTEM, prompt),
+    bytes: requestBytes(ADVICE_SYSTEM, prompt, ADVICE_SCHEMA),
     notIncluded: `Not included: ${txCount} transactions, merchants, dates, amounts`,
     schema: ADVICE_SCHEMA,
   }
@@ -222,8 +240,8 @@ export async function askAdvice(session: AskSession, deps: AskDeps, manifest: Ma
       if (a) return { ok: true, advice: a }
       last = 'The cloud response did not match the expected shape.'
     } catch (e) {
-      deps.log({ task: manifest.task, mode: manifest.mode, side: 'cloud', ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: `Call failed (${e instanceof Error ? e.message : 'error'}).` })
-      return { ok: false, error: 'The cloud call failed.' }
+      deps.log({ task: manifest.task, mode: manifest.mode, side: 'cloud', ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: `Call failed: ${describeCloudError(e)}.` })
+      return { ok: false, error: `The cloud call failed: ${describeCloudError(e)}.` }
     }
   }
   return { ok: false, error: last }

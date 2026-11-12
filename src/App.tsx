@@ -147,7 +147,8 @@ export default function App() {
     } catch (err) {
       setProgress(null)
       runRules('On-device model failed to start; fell back to local rules.', overrides)
-      setNote(`On-device model failed (${err instanceof Error ? err.message : 'unknown error'}); used local keyword rules instead.`)
+      console.error('On-device model failed to start', err)
+      setNote('The on-device model could not start on this browser or machine; used local keyword rules instead.')
     } finally { setBusy(false) }
   }
 
@@ -319,7 +320,9 @@ export default function App() {
         {answer && (
           <div>
             <h3>{answer.q}</h3>
-            <p className="muted">{answer.outcome.note}{answer.outcome.cached ? ' (cached answer)' : ''}</p>
+            {answer.outcome.unsupported
+              ? <p className="badge warn">{answer.outcome.note}</p>
+              : <p className="muted">{answer.outcome.note}{answer.outcome.cached ? ' (cached answer)' : ''}</p>}
             {answer.result ? (
               <table>
                 <thead><tr><th>{answer.result.groupBy ?? 'Result'}</th><th className="num">{answer.result.aggregate}</th><th className="num">rows</th><th /></tr></thead>
@@ -332,7 +335,7 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-            ) : <p className="badge warn">No result.</p>}
+            ) : !answer.outcome.unsupported && <p className="badge warn">No result.</p>}
           </div>
         )}
       </section>
@@ -411,10 +414,14 @@ function ManifestBox({ m, onSend, onCancel, cancelText }: { m: Manifest; onSend:
   return (
     <div className="panel" role="dialog" aria-label="Data leaving this device">
       <h3>This exact text will leave your device ({m.bytes} bytes)</h3>
-      <p className="muted">Mode: {m.mode}. Instructions:</p>
+      <p className="muted">Mode: {m.mode}. The size counts the instructions, the message and the response structure below; the network adds a little more for headers and wrapping. Instructions:</p>
       <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.8rem' }}>{m.system}</pre>
       <p className="muted">Message:</p>
       <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.8rem' }}>{m.prompt}</pre>
+      <details>
+        <summary className="muted">Response structure sent with the request (tells the model which JSON shape to answer with)</summary>
+        <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.75rem' }}>{JSON.stringify(m.schema, null, 1)}</pre>
+      </details>
       <p><b>{m.notIncluded}</b></p>
       <div className="row">
         <button className="primary" onClick={onSend}>Send</button>

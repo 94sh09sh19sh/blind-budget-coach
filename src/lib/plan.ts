@@ -24,7 +24,10 @@ export interface QueryPlan {
   limit?: number
 }
 
-export type Validation = { ok: true; plan: QueryPlan } | { ok: false; error: string }
+/** 雲端認為問題超出能力範圍時回的結構：只有一個原因字串，不可附帶其他欄位。 */
+export interface UnsupportedPlan { unsupportedReason: string }
+
+export type Validation = { ok: true; plan: QueryPlan } | { ok: true; unsupported: string; plan?: undefined } | { ok: false; error: string }
 
 const FILTER_KEYS = ['categories', 'merchantContains', 'dateFrom', 'dateTo', 'amountMin', 'amountMax', 'direction']
 const PLAN_KEYS = ['filter', 'groupBy', 'aggregate', 'sort', 'limit']
@@ -41,6 +44,11 @@ function validIsoDate(s: unknown): s is string {
 /** 嚴格驗證：未知欄位、型別不對、值超出白名單一律拒絕。 */
 export function validatePlan(x: unknown): Validation {
   if (!isObj(x)) return { ok: false, error: 'plan must be an object' }
+  if (x.unsupportedReason !== undefined) {
+    if (Object.keys(x).length !== 1 || typeof x.unsupportedReason !== 'string' || !x.unsupportedReason.trim() || x.unsupportedReason.length > 300)
+      return { ok: false, error: 'unsupportedReason must be the only key and a short non-empty string' }
+    return { ok: true, unsupported: x.unsupportedReason.trim() }
+  }
   for (const k of Object.keys(x)) if (!PLAN_KEYS.includes(k)) return { ok: false, error: `unknown key: ${k}` }
   if (x.aggregate !== 'sum' && x.aggregate !== 'count' && x.aggregate !== 'avg') return { ok: false, error: 'aggregate must be sum, count or avg' }
   const plan: QueryPlan = { aggregate: x.aggregate }
@@ -95,7 +103,7 @@ export function validatePlan(x: unknown): Validation {
   return { ok: true, plan }
 }
 
-/** 給雲端結構化輸出用的 JSON Schema（與驗證器一致；驗證器仍是最後一道關）。 */
+/** 給雲端結構化輸出用的 JSON Schema（與驗證器一致；驗證器仍是最後一道關，aggregate 必填由驗證器檢查）。 */
 export const PLAN_SCHEMA = {
   type: 'object',
   properties: {
@@ -115,8 +123,8 @@ export const PLAN_SCHEMA = {
     aggregate: { type: 'string', enum: ['sum', 'count', 'avg'] },
     sort: { type: 'string', enum: ['value_desc', 'value_asc', 'label_asc'] },
     limit: { type: 'integer', minimum: 1, maximum: 50 },
+    unsupportedReason: { type: 'string', description: 'Only when the question cannot be answered with the fields above; then omit every other field' },
   },
-  required: ['aggregate'],
 }
 
 /** 取 YYYY-MM-DD；支援 YYYY-MM-DD 與 M/D/YYYY，其他回傳 null。 */

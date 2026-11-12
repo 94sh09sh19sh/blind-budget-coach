@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EXAMPLE_QUESTIONS, isoDate, matchByKeywords, patternToPlan, runPlan, validateChoice, validatePlan } from './plan'
-import { AskSession, MAX_CLOUD_CALLS, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, validateAdvice } from './cloudtasks'
+import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, validateAdvice } from './cloudtasks'
 import type { Classified } from './aggregate'
 import type { CloudCall } from './ai'
 import type { TimelineEntry } from './router'
@@ -133,7 +133,7 @@ describe('出境清單', () => {
     expect(m.notIncluded).toBe('Not included: 60 transactions, merchants, dates, amounts')
   })
   it('位元組數是 UTF-8 長度', () => {
-    expect(m.bytes).toBe(new TextEncoder().encode(m.system + m.prompt).length)
+    expect(m.bytes).toBe(new TextEncoder().encode(m.system + m.prompt + JSON.stringify(m.schema)).length)
     const z = buildPlanManifest('咖啡花了多少', COLS, '2026-11-12', 1)
     expect(z.bytes).toBeGreaterThan((z.system + z.prompt).length)
   })
@@ -144,6 +144,43 @@ describe('出境清單', () => {
     expect(a.mode).toBe('ONLY_IN_CLOUD')
     expect(a.prompt).toMatch(/Groceries: 53%/)
     expect(a.prompt).not.toMatch(/\d\.\d/)
+  })
+})
+
+describe('雲端錯誤說明', () => {
+  it('不回傳原始例外字串', () => {
+    expect(describeCloudError(new Error('429 RESOURCE_EXHAUSTED key=SECRET'))).toBe('the free daily or per-minute limit was reached')
+    expect(describeCloudError(new Error('App Check token invalid (403)'))).toContain('App Check')
+    expect(describeCloudError(new Error('weird SECRET text'))).toBe('an unexpected error')
+  })
+  it('失敗時使用者看到的訊息不含原始字串', async () => {
+    const cloud: CloudCall = async () => { throw new Error('403 key=SECRET') }
+    const { deps, logs } = mkDeps({ cloud })
+    const q = 'top spending categories'
+    const r = await askCloud(new AskSession(), deps, q, buildPlanManifest(q, COLS, '2026-11-12', 60))
+    expect(r.note).not.toContain('SECRET')
+    expect(logs[0].reason).not.toContain('SECRET')
+  })
+})
+
+describe('超出能力範圍', () => {
+  it('只有 unsupportedReason：驗證通過且不帶計畫', () => {
+    const r = validatePlan({ unsupportedReason: 'needs two periods compared' })
+    expect(r).toEqual({ ok: true, unsupported: 'needs two periods compared' })
+  })
+  it('unsupportedReason 混著其他欄位、空字串、非字串都被拒', () => {
+    expect(validatePlan({ unsupportedReason: 'x', aggregate: 'sum' }).ok).toBe(false)
+    expect(validatePlan({ unsupportedReason: '  ' }).ok).toBe(false)
+    expect(validatePlan({ unsupportedReason: 5 }).ok).toBe(false)
+  })
+  it('雲端回報超出能力：不退回固定樣式，不給數字', async () => {
+    const cloud: CloudCall = async () => ({ text: '{"unsupportedReason":"It compares two years."}', source: 'cloud' })
+    const { deps } = mkDeps({ cloud, deviceChoose: async () => JSON.stringify({ pattern: 'monthly_spend' }) })
+    const q = 'compare this year to last year'
+    const r = await askCloud(new AskSession(), deps, q, buildPlanManifest(q, COLS, '2026-11-12', 60))
+    expect(r.plan).toBeNull()
+    expect(r.unsupported).toBe(true)
+    expect(r.note).toContain('It compares two years.')
   })
 })
 

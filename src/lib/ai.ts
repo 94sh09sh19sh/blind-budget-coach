@@ -87,8 +87,8 @@ export const firebaseCloudCall: CloudCall = async (req) => {
   return { text: r.response.text(), source: r.response.inferenceSource === 'on_device' ? 'device' : 'cloud' }
 }
 
-/** 一次雲端請求會送出的內容位元組數（system + prompt 的 UTF-8 長度，不含 HTTP 標頭與 JSON 外框）。 */
-export function requestBytes(system: string, prompt: string): number {
+/** 一次雲端請求會送出的內容位元組數（system + prompt + 回應結構的 JSON，UTF-8 長度，不含 HTTP 標頭與 SDK 的外框）。 */
+export function requestBytes(system: string, prompt: string, schema?: object): number {
   const enc = new TextEncoder()
-  return enc.encode(system).length + enc.encode(prompt).length
+  return enc.encode(system).length + enc.encode(prompt).length + (schema ? enc.encode(JSON.stringify(schema)).length : 0)
 }

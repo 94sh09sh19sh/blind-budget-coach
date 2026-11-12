@@ -9,8 +9,8 @@ import { applyOverrides, setOverride } from './overrides'
 
 describe('normalizeDesc', () => {
   it('去掉前綴、店號、卡號尾碼、城市', () => {
-    expect(normalizeDesc('POS PURCHASE APPLE.COM/BILL STORE 5802')).toBe('APPLE.COM/BILL')
-    expect(normalizeDesc('tst* trader joe s new york ny')).toBe('TRADER JOE S')
+    expect(normalizeDesc('POS PURCHASE EXAMPLE.COM/BILL STORE 5802')).toBe('EXAMPLE.COM/BILL')
+    expect(normalizeDesc('tst* green leaf deli new york ny')).toBe('GREEN LEAF DELI')
     expect(normalizeDesc('CREDIT CARD PAYMENT THANK YOU XX1645')).toBe('CREDIT CARD PAYMENT THANK YOU')
   })
   it('同店家不同雜訊得到相同鍵', () => {
@@ -28,10 +28,12 @@ describe('categories', () => {
 
 describe('classifyByRules', () => {
   it('常見店家', () => {
-    expect(classifyByRules('STARBUCKS #123')).toBe('Dining')
-    expect(classifyByRules('DOORDASH*ORDER')).toBe('Delivery')
+    expect(classifyByRules('BLUE HERON CAFE #123')).toBe('Dining')
+    expect(classifyByRules('QUICKBITE DELIVERY*ORDER')).toBe('Delivery')
     expect(classifyByRules('PAYROLL DIRECT DEP ACME CORP')).toBe('Income')
-    expect(classifyByRules('NETFLIX.COM')).toBe('Subscriptions')
+    expect(classifyByRules('STREAMLY PLUS')).toBe('Subscriptions')
+    expect(classifyByRules('CORNER PHARMACY')).toBe('Health')
+    expect(classifyByRules('GREENFIELD MARKET')).toBe('Groceries')
   })
   it('無法判斷回傳 null', () => {
     expect(classifyByRules('XYZZY QQQ')).toBeNull()

@@ -111,8 +111,9 @@ describe('route', () => {
     expect(r.mode).toBe('LOCAL_RULES')
     expect(r.side).toBe('rules')
   })
-  it('示範資料：裝置端優先，沒有就改雲端，離線用規則', () => {
+  it('示範資料：有模型只走裝置端，沒有就用規則，分類不上雲', () => {
     expect(route({ ...base, level: 'public-sample' }).side).toBe('device')
+    expect(route({ ...base, level: 'public-sample' }).mode).toBe('ONLY_ON_DEVICE')
     expect(route({ ...base, level: 'public-sample', deviceModel: 'unavailable' }).side).toBe('rules')
     expect(route({ ...base, level: 'public-sample', deviceModel: 'unavailable', online: false }).side).toBe('rules')
   })

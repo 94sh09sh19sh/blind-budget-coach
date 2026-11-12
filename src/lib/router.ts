@@ -7,7 +7,6 @@ export type DataLevel =
 
 export type Mode =
   | 'ONLY_ON_DEVICE'
-  | 'PREFER_ON_DEVICE'
   | 'PREFER_IN_CLOUD'
   | 'ONLY_IN_CLOUD'
   | 'LOCAL_RULES' // 本機關鍵字規則（不經任何模型）
@@ -37,8 +36,9 @@ export function route(i: RouteInput): RouteDecision {
         ? { mode: 'ONLY_ON_DEVICE', side: 'device', reason: 'Your own transactions are classified on this device and are not sent.' }
         : { mode: 'LOCAL_RULES', side: 'rules', reason: 'On-device model unavailable; using local keyword rules. Nothing is uploaded.' }
     case 'public-sample':
-      if (dev) return { mode: 'PREFER_ON_DEVICE', side: 'device', reason: 'Public sample data; on-device model preferred.' }
-      // 實際行為：沒有裝置端模型時，示範資料也走本機規則，分類不上雲
+      // 分類一律以 ONLY_ON_DEVICE 呼叫 SDK（示範資料也一樣）：改用 PREFER_ON_DEVICE 的話，沒有模型時 SDK 會不經出境清單就送雲端
+      if (dev) return { mode: 'ONLY_ON_DEVICE', side: 'device', reason: 'Public sample data; classified by the on-device model.' }
+      // 沒有裝置端模型時，示範資料也走本機規則，分類不上雲
       return { mode: 'LOCAL_RULES', side: 'rules', reason: 'Public sample data; on-device model unavailable, using local keyword rules. Nothing is uploaded.' }
     case 'schema-only':
       if (i.online && i.consent) return { mode: 'PREFER_IN_CLOUD', side: 'cloud', reason: 'Only column structure is shared; cloud writes the query plan.' }

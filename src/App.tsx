@@ -32,8 +32,7 @@ const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
 
 const MODES: { mode: Mode; side: Side; use: string; why: string }[] = [
-  { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Your own statement', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere.' },
-  { mode: 'PREFER_ON_DEVICE', side: 'device', use: 'Built-in samples', why: 'Synthetic data; the on-device model is preferred.' },
+  { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Statements and samples', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere.' },
   { mode: 'PREFER_IN_CLOUD', side: 'cloud', use: 'Questions', why: 'The cloud writes a query plan from your question and column names, after you approve. Declined or offline: a fixed pattern is picked here.' },
   { mode: 'ONLY_IN_CLOUD', side: 'cloud', use: 'Budget advice', why: 'Sends whole-number category percentages only, after you approve.' },
   { mode: 'LOCAL_RULES', side: 'rules', use: 'No model available', why: 'Keyword rules in this page. Nothing is uploaded.' },
@@ -289,12 +288,12 @@ export default function App() {
     try {
       if (p.kind === 'plan') {
         startPhase(sendIt
-          ? { label: 'Waiting for the cloud to write a query plan', detail: 'Usually 2–12 s. Your data is not part of the request.', where: 'cloud' }
+          ? { label: 'Waiting for the cloud to write a query plan', detail: 'Usually 2–12 s; gives up after 45 s. Your data is not part of the request.', where: 'cloud' }
           : { label: 'Picking a fixed query pattern on this device', where: 'device' })
         const d = await deps()
         show(p.question, sendIt ? await askCloud(session.current, d, p.question, p.manifest) : await askFixed(session.current, d, p.question, 'You chose not to send anything; using a fixed pattern.'))
       } else if (sendIt) {
-        startPhase({ label: 'Waiting for budget advice from the cloud', detail: 'Usually 2–12 s.', where: 'cloud' })
+        startPhase({ label: 'Waiting for budget advice from the cloud', detail: 'Usually 2–12 s; gives up after 45 s.', where: 'cloud' })
         const r = await askAdvice(session.current, await deps(), p.manifest)
         setAdvice(r.ok ? { advice: r.advice } : { error: r.error })
       }

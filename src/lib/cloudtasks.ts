@@ -1,7 +1,7 @@
 // 雲端任務：盲眼分析（問題 → 查詢計畫）與預算建議（類別占比 → 三條建議）。
 // 雲端呼叫與裝置端選樣式都是注入的函式；本檔不碰 SDK，單元測試用假的回應。
 import { CATEGORIES } from './categories'
-import { requestBytes, type CloudCall, type CloudMode } from './ai'
+import { requestBytes, type CloudCall, type CloudMode, type CloudRequest, type CloudResult } from './ai'
 import { PLAN_SCHEMA, matchByKeywords, patternToPlan, validateChoice, validatePlan, type PatternChoice, type QueryPlan } from './plan'
 import type { Side, TimelineEntry } from './router'
 
@@ -24,6 +24,7 @@ export function describeCloudError(e: unknown): string {
   if (/429|quota|rate.?limit|resource.?exhausted/i.test(m)) return 'the free daily or per-minute limit was reached'
   if (/app.?check|appcheck|401|403|permission|unauthenticated|api.?key/i.test(m)) return 'the request was refused (App Check or API key problem)'
   if (/404|not found/i.test(m)) return 'the model was not found'
+  if (/timed out/i.test(m)) return 'no response within the time limit'
   if (/network|fetch|offline|failed to load|timeout/i.test(m)) return 'the network request failed'
   return 'an unexpected error'
 }
@@ -93,9 +94,26 @@ export interface AskDeps {
   deviceChoose?: (question: string) => Promise<string>
   log: LogFn
   now?: () => number
+  /** 一次雲端呼叫最多等多久（毫秒）；沒給就用 CLOUD_TIMEOUT_MS */
+  timeoutMs?: number
 }
 
+/** 一次雲端呼叫的等待上限。正常 2～12 秒；超過就當作失敗，不讓介面一直等。 */
+export const CLOUD_TIMEOUT_MS = 45_000
+
 const tm = (d: AskDeps) => (d.now ?? (() => performance.now()))()
+
+/** 雲端呼叫加等待上限：逾時就丟錯，由呼叫端照「呼叫失敗」處理（盲眼分析退回固定樣式，預算建議顯示錯誤）。 */
+function callCloud(deps: AskDeps, cloud: CloudCall, req: CloudRequest): Promise<CloudResult> {
+  const ms = deps.timeoutMs ?? CLOUD_TIMEOUT_MS
+  return new Promise<CloudResult>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('cloud call timed out')), ms)
+    cloud(req).then(
+      (r) => { clearTimeout(timer); resolve(r) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
 
 /** 固定樣式：裝置端模型選（ONLY_ON_DEVICE）；沒有就用關鍵字比對。 */
 export async function askFixed(session: AskSession, deps: AskDeps, question: string, why: string): Promise<AskOutcome> {
@@ -139,7 +157,7 @@ export async function askCloud(session: AskSession, deps: AskDeps, question: str
     const t0 = tm(deps)
     let side: Side = 'cloud'
     try {
-      const r = await deps.cloud({ mode: manifest.mode, system: manifest.system, prompt: manifest.prompt, schema: manifest.schema })
+      const r = await callCloud(deps, deps.cloud, { mode: manifest.mode, system: manifest.system, prompt: manifest.prompt, schema: manifest.schema })
       side = r.source === 'device' ? 'device' : 'cloud'
       let v
       try { v = validatePlan(JSON.parse(r.text)) } catch { v = { ok: false as const, error: 'response was not valid JSON' } }
@@ -237,7 +255,7 @@ export async function askAdvice(session: AskSession, deps: AskDeps, manifest: Ma
     session.cloudCalls++
     const t0 = tm(deps)
     try {
-      const r = await deps.cloud({ mode: manifest.mode, system: manifest.system, prompt: manifest.prompt, schema: manifest.schema })
+      const r = await callCloud(deps, deps.cloud, { mode: manifest.mode, system: manifest.system, prompt: manifest.prompt, schema: manifest.schema })
       let a: Advice | null = null
       try { a = validateAdvice(JSON.parse(r.text)) } catch { a = null }
       deps.log({ task: manifest.task, mode: manifest.mode, side: 'cloud', ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: a ? 'Advice accepted.' : `Response did not match the expected shape${attempt === 0 ? '; retrying once' : ''}.` })

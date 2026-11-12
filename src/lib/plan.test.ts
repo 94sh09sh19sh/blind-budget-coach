@@ -243,6 +243,18 @@ describe('askCloud', () => {
     expect(r.source).toBe('rules')
     expect(r.note).toMatch(/limit/)
   })
+  it('雲端一直沒回應：到等待上限就當作失敗，改用固定樣式，不重試', async () => {
+    const cloud: CloudCall = () => new Promise(() => {})
+    const { deps, logs } = mkDeps({ cloud, timeoutMs: 10 })
+    const s = new AskSession()
+    const q = 'what are my top spending categories?'
+    const r = await askCloud(s, deps, q, buildPlanManifest(q, COLS, '2026-11-12', 60))
+    expect(s.cloudCalls).toBe(1)
+    expect(r.source).toBe('rules')
+    expect(r.plan).not.toBeNull()
+    expect(r.note).toContain('no response within the time limit')
+    expect(logs[0].reason).toContain('no response within the time limit')
+  })
   it('沒有雲端函式：直接固定樣式', async () => {
     const { deps, logs } = mkDeps()
     const r = await askCloud(new AskSession(), deps, EXAMPLE_QUESTIONS[0], m)
@@ -272,6 +284,11 @@ describe('askAdvice', () => {
     const r = await askAdvice(s, deps, m)
     expect(r.ok).toBe(false)
     expect(s.cloudCalls).toBe(2)
+  })
+  it('雲端一直沒回應：到等待上限回錯', async () => {
+    const { deps } = mkDeps({ cloud: () => new Promise(() => {}), timeoutMs: 10 })
+    const r = await askAdvice(new AskSession(), deps, m)
+    expect(r).toEqual({ ok: false, error: 'The cloud call failed: no response within the time limit.' })
   })
   it('沒有雲端函式：停用', async () => {
     const { deps } = mkDeps()

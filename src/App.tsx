@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { CATEGORIES, type Category } from './lib/categories'
 import { guessColumns, parseCsv, toTransactions, type ColumnMap, type ParsedCsv } from './lib/csv'
-import { classifyAll, checkAvailability, createBaseSession, type Availability } from './lib/ondevice'
+import { classifyAll, checkAvailability, createClassifier, type Availability } from './lib/ondevice'
 import { classifyByRules } from './lib/rules'
 import { normalizeDesc } from './lib/normalize'
 import { spendByCategory, type Classified } from './lib/aggregate'
 import { route, type DataLevel, type TimelineEntry } from './lib/router'
-import { CLOUD_ENABLED } from './firebase'
+import { CLOUD_CONFIGURED as CLOUD_ENABLED } from './firebase'
 
 type Engine = 'device' | 'rules' | null
 
@@ -76,12 +76,12 @@ export default function App() {
       const d = route({ level, deviceModel: a === 'available' || a === 'downloadable' || a === 'downloading' ? 'available' : 'unavailable', online: navigator.onLine, consent: false })
       if (d.side === 'device') {
         setProgress(0)
-        const base = await createBaseSession((p) => setProgress(p))
+        const base = await createClassifier((p) => setProgress(p))
         setProgress(null); setAvail('available'); setEngine('device')
         const byKey = new Map<string, Category | null>()
         const idsByDesc = new Map<string, number[]>()
         for (const t of txs) idsByDesc.set(t.desc, [...(idsByDesc.get(t.desc) ?? []), t.id])
-        await classifyAll(base, txs.map((t) => t.desc), (e) => {
+        await classifyAll(base.generate, txs.map((t) => t.desc), (e) => {
           byKey.set(e.key, e.category)
           setCats((prev) => {
             const n = new Map(prev)
@@ -90,7 +90,6 @@ export default function App() {
           })
           if (!e.cached) log({ task: `classify "${e.key}"`, mode: d.mode, side: 'device', ms: e.ms, bytesSent: 0, reason: d.reason })
         })
-        try { base.destroy() } catch { /* 忽略 */ }
       } else {
         // 雲端路徑目前沒有接線：就算路由建議雲端，也一律改用本機規則
         const why = d.side === 'cloud' ? 'Cloud path is not wired in this build; using local rules. Nothing is uploaded.' : d.reason

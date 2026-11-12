@@ -3,7 +3,7 @@
 // SDK 的裝置端路徑每次呼叫都會再建立一個 Chrome session（用 createOptions.initialPrompts 帶系統提示），
 // 結構化輸出只能設在模型層級（promptOptions.responseConstraint），所以每種任務各建一個模型物件。
 import { getGenerativeModel, InferenceMode, type GenerativeModel } from 'firebase/ai'
-import { CLOUD_CONFIGURED, CLOUD_MODEL, getAi } from '../firebase'
+import { CLOUD_CONFIGURED, CLOUD_MODEL, getAi, getCloudAi } from '../firebase'
 
 export type Gen = (prompt: string) => Promise<string>
 
@@ -67,7 +67,7 @@ export type CloudCall = (req: CloudRequest) => Promise<CloudResult>
 export const firebaseCloudCall: CloudCall = async (req) => {
   if (!CLOUD_CONFIGURED) throw new Error('Cloud is not configured (placeholder Firebase config).')
   const mode = req.mode === 'ONLY_IN_CLOUD' ? InferenceMode.ONLY_IN_CLOUD : InferenceMode.PREFER_IN_CLOUD
-  const model = getGenerativeModel(getAi(), {
+  const model = getGenerativeModel(getCloudAi(), {
     mode,
     inCloudParams: {
       model: CLOUD_MODEL,

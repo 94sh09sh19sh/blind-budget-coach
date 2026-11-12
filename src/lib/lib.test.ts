@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { normalizeDesc } from './normalize'
 import { CATEGORIES, isCategory } from './categories'
 import { classifyByRules } from './rules'
-import { guessColumns, parseAmount, parseCsv, toTransactions } from './csv'
+import { detectSign, guessColumns, parseAmount, parseCsv, toTransactions } from './csv'
 import { monthOf, spendByCategory, spendByMonthCategory, type Classified } from './aggregate'
 import { route } from './router'
+import { applyOverrides, setOverride } from './overrides'
 
 describe('normalizeDesc', () => {
   it('去掉前綴、店號、卡號尾碼、城市', () => {
@@ -41,7 +42,7 @@ describe('csv', () => {
   const text = 'Posted Date,Description,Amount\n2026-01-03,BLUE HERON CAFE,-12.50\n2026-01-04,PAYROLL,"1,200.00"\n2026-01-05,,5\n'
   it('猜欄位', () => {
     const p = parseCsv(text)
-    expect(guessColumns(p.headers)).toEqual({ date: 'Posted Date', description: 'Description', amount: 'Amount' })
+    expect(guessColumns(p.headers)).toEqual({ date: 'Posted Date', description: 'Description', amount: 'Amount', debit: '', credit: '' })
   })
   it('轉成交易並略過空說明', () => {
     const p = parseCsv(text)
@@ -54,6 +55,31 @@ describe('csv', () => {
     expect(parseAmount('($5.00)')).toBe(-5)
     expect(parseAmount('$1,234.5')).toBe(1234.5)
     expect(parseAmount('abc')).toBeNaN()
+  })
+})
+
+describe('csv 正負號與分欄', () => {
+  const split = 'Date,Description,Debit,Credit\n2026-01-03,CAFE,12.50,\n2026-01-04,PAYROLL,,1200.00\n'
+  it('Debit／Credit 分欄：支出為負、收入為正', () => {
+    const p = parseCsv(split)
+    const m = guessColumns(p.headers)
+    expect(m.debit).toBe('Debit')
+    expect(m.credit).toBe('Credit')
+    expect(toTransactions(p, m).map((t) => t.amount)).toEqual([-12.5, 1200])
+  })
+  const cc = 'Date,Description,Amount\n2026-01-03,CAFE,12.50\n2026-01-04,GROCERY,40.00\n2026-01-05,PAYMENT THANK YOU,-200.00\n'
+  it('信用卡式（支出為正）：自動判斷並翻轉，可手動切換', () => {
+    const p = parseCsv(cc)
+    const m = guessColumns(p.headers)
+    expect(detectSign(p, m)).toBe('expenses-positive')
+    expect(toTransactions(p, m).map((t) => t.amount)).toEqual([-12.5, -40, 200])
+    expect(toTransactions(p, m, 'expenses-negative').map((t) => t.amount)).toEqual([12.5, 40, -200])
+  })
+  it('薪資列的符號優先於多數符號', () => {
+    const p = parseCsv('Date,Description,Amount\n2026-01-03,PAYROLL ACME,1000\n2026-01-04,A,-1\n2026-01-05,B,-2\n')
+    expect(detectSign(p, guessColumns(p.headers))).toBe('expenses-negative')
+    const q = parseCsv('Date,Description,Amount\n2026-01-03,PAYROLL ACME,-1000\n2026-01-04,A,1\n')
+    expect(detectSign(q, guessColumns(q.headers))).toBe('expenses-positive')
   })
 })
 
@@ -96,5 +122,19 @@ describe('route', () => {
     expect(route({ ...base, level: 'aggregate', consent: true }).mode).toBe('ONLY_IN_CLOUD')
     expect(route({ ...base, level: 'aggregate' }).mode).toBe('DISABLED')
     expect(route({ ...base, level: 'aggregate', consent: true, online: false }).mode).toBe('DISABLED')
+  })
+})
+
+describe('overrides', () => {
+  const txs = [
+    { id: 1, date: '2026-01-01', desc: 'POS PURCHASE JOES DINER #1', amount: -10 },
+    { id: 2, date: '2026-01-02', desc: 'JOES DINER XX1234', amount: -20 },
+    { id: 3, date: '2026-01-03', desc: 'OTHER PLACE', amount: -5 },
+  ]
+  it('更正套用到同一個清理後字串的所有列', () => {
+    const r = setOverride(txs, {}, 'JOES DINER', 'Entertainment')
+    expect(r.affected).toBe(2)
+    const cats = applyOverrides(txs, new Map([[1, 'Dining'], [2, 'Dining'], [3, 'Shopping']]), r.overrides)
+    expect([cats.get(1), cats.get(2), cats.get(3)]).toEqual(['Entertainment', 'Entertainment', 'Shopping'])
   })
 })

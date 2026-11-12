@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import './App.css'
 import { CATEGORIES, type Category } from './lib/categories'
 import { detectSign, guessColumns, isSplit, parseCsv, toTransactions, type ColumnMap, type ParsedCsv, type SignMode, type Tx } from './lib/csv'
-import { classifyAll, checkAvailability, createClassifier, type Availability } from './lib/ondevice'
+import { classifyAll, checkAvailability, createBatchClassifier, createClassifier, DEFAULT_BATCH_SIZE, type Availability } from './lib/ondevice'
 import { classifyByRules } from './lib/rules'
 import { normalizeDesc } from './lib/normalize'
 import { spendByCategory, type Classified } from './lib/aggregate'
@@ -25,14 +25,14 @@ type Engine = 'device' | 'rules' | null
 type Pending = { kind: 'plan'; question: string; manifest: Manifest } | { kind: 'advice'; manifest: Manifest }
 /** 進行中的工作：標籤、開始時間（算經過秒數用） */
 type Phase = { label: string; detail?: string; start: number; where: 'device' | 'cloud' }
-type ClassifyProgress = { done: number; total: number; last?: { key: string; category: Category | null } }
+type ClassifyProgress = { done: number; total: number; keys: string[]; batch: number; last?: { key: string; category: Category | null } }
 
 const today = () => new Date().toISOString().slice(0, 10)
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
 
 const MODES: { mode: Mode; side: Side; use: string; why: string }[] = [
-  { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Your own statement', why: 'Each transaction is classified by the on-device model. It never leaves.' },
+  { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Your own statement', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere.' },
   { mode: 'PREFER_ON_DEVICE', side: 'device', use: 'Built-in samples', why: 'Synthetic data; the on-device model is preferred.' },
   { mode: 'PREFER_IN_CLOUD', side: 'cloud', use: 'Questions', why: 'The cloud writes a query plan from your question and column names, after you approve. Declined or offline: a fixed pattern is picked here.' },
   { mode: 'ONLY_IN_CLOUD', side: 'cloud', use: 'Budget advice', why: 'Sends whole-number category percentages only, after you approve.' },
@@ -118,15 +118,21 @@ export default function App() {
   const hasData = txs.length > 0
   const ready = doneCount > 0
   const elapsed = phase ? Math.max(0, Math.floor((now - phase.start) / 1000)) : 0
-  const workingKey = busy && prog && prog.done < prog.total ? uniqueKeys[prog.done] : null
+  // 正在處理的店家：還沒完成的前 batch 個（逐筆時就是一個；批次時整批一起標示）
+  const workingKeys = useMemo(() => {
+    if (!busy || !prog || prog.done >= prog.total) return [] as string[]
+    const doneSet = new Set(prog.keys)
+    return uniqueKeys.filter((k) => !doneSet.has(k)).slice(0, prog.batch)
+  }, [busy, prog, uniqueKeys])
+  const workingId = workingKeys.join('|')
 
   // 分類中把正在處理的那一列捲進表格可視範圍，讓逐筆亮起看得到
   useEffect(() => {
-    if (!workingKey) return
+    if (!workingId) return
     const row = document.querySelector<HTMLElement>('.tx .scroll tr.working')
     const box = row?.closest<HTMLElement>('.scroll')
     if (row && box && (row.offsetTop < box.scrollTop + 30 || row.offsetTop > box.scrollTop + box.clientHeight - 60)) box.scrollTop = row.offsetTop - box.clientHeight / 2
-  }, [workingKey])
+  }, [workingId])
 
   function startPhase(p: Omit<Phase, 'start'>) { setNow(Date.now()); setPhase({ ...p, start: Date.now() }) }
 
@@ -182,9 +188,12 @@ export default function App() {
         setDl(0)
         startPhase({ label: 'Starting the on-device model', detail: 'First start takes about 15–30 s.', where: 'device' })
         const model = await createClassifier((p) => setDl(p))
-        setDl(null); setAvail('available'); setEngine('device')
+        const batchN = DEFAULT_BATCH_SIZE
+        const bm = batchN > 1 ? createBatchClassifier((p) => setDl(p)) : null
         const total = new Set(txs.map((t) => normalizeDesc(t.desc))).size
-        setProg({ done: 0, total })
+        if (bm) await bm.warm([batchN, total % batchN].filter((n) => n > 1))
+        setDl(null); setAvail('available'); setEngine('device')
+        setProg({ done: 0, total, keys: [], batch: batchN })
         startPhase({ label: 'Classifying on this device', where: 'device' })
         const idsByDesc = new Map<string, number[]>()
         for (const t of txs) idsByDesc.set(t.desc, [...(idsByDesc.get(t.desc) ?? []), t.id])
@@ -195,9 +204,14 @@ export default function App() {
             for (const ds of e.descs) for (const id of idsByDesc.get(ds) ?? []) n.set(id, e.category)
             return n
           })
-          setProg((p) => p && { ...p, done: p.done + 1, last: { key: e.key, category: e.category } })
-          if (!e.cached) log({ task: `classify "${e.key}"`, mode: 'ONLY_ON_DEVICE', side: model.lastSource() === 'cloud' ? 'cloud' : 'device', ms: e.ms, bytesSent: 0, reason: d.reason })
-        }, ovMap)
+          setProg((p) => p && { ...p, done: p.done + 1, keys: [...p.keys, e.key], last: { key: e.key, category: e.category } })
+          const side = (bm && e.batch && !e.batch.fellBack ? bm.lastSource() : model.lastSource()) === 'cloud' ? 'cloud' : 'device'
+          if (e.cached) return
+          if (e.batch && !e.batch.fellBack) {
+            // 時間線每批一列，寫明這批有幾個字串
+            if (e.batch.first) log({ task: `classify batch of ${e.batch.size} merchants`, mode: 'ONLY_ON_DEVICE', side, ms: e.batch.ms, bytesSent: 0, reason: d.reason })
+          } else log({ task: `classify "${e.key}"${e.batch ? ' (batch fell back to one by one)' : ''}`, mode: 'ONLY_ON_DEVICE', side, ms: e.ms, bytesSent: 0, reason: d.reason })
+        }, ovMap, { batchSize: batchN, genBatch: bm?.generate })
         setCats((prev) => { persist(prev); return prev })
       } else {
         // 分類走本機規則；雲端不碰使用者明細
@@ -298,7 +312,7 @@ export default function App() {
           <Logo />
           <div>
             <div className="brand-name">Blind Budget Coach</div>
-            <div className="brand-tag">Your statement stays on this device. The cloud sees only text you approve.</div>
+            <div className="brand-tag">Your statement is classified in this browser. Anything sent to the cloud is shown to you first.</div>
           </div>
         </div>
         <div className="meter" role="status" aria-live="polite" aria-atomic="true">
@@ -423,7 +437,7 @@ export default function App() {
                       <div className="bar" aria-hidden="true"><span style={{ width: `${(prog.done / Math.max(1, prog.total)) * 100}%` }} /></div>
                       <div className="progress-detail">
                         <span className="mono">{prog.done} / {prog.total} merchants</span>
-                        {workingKey && <span>now: <code>{workingKey}</code></span>}
+                        {workingKeys.length > 0 && <span>now: <code>{workingKeys.join(', ')}</code></span>}
                         {prog.done === 0 && <span>The first call warms up the model (about 15–30 s); then about 1–2 s per merchant.</span>}
                         {prog.last && <span className="muted">last: {prog.last.key} → {prog.last.category ?? 'unknown'}</span>}
                       </div>
@@ -465,7 +479,7 @@ export default function App() {
                     <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col" className="num">Amount</th><th scope="col">Category</th></tr></thead>
                     <tbody>
                       {classified.map((t) => {
-                        const working = workingKey !== null && normalizeDesc(t.desc) === workingKey
+                        const working = workingKeys.includes(normalizeDesc(t.desc))
                         return (
                           <tr key={t.id} className={t.category ? 'done' : working ? 'working' : busy ? 'waiting' : ''}>
                             <td className="mono dim">{t.date}</td>

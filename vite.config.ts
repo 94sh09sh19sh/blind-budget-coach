@@ -14,7 +14,7 @@ export default defineConfig({
       manifest: {
         name: 'Blind Budget Coach',
         short_name: 'BudgetCoach',
-        description: 'A budgeting coach that never sees your line items.',
+        description: 'A budgeting coach that classifies your bank statement in the browser on this device. You can check what leaves it.',
         theme_color: '#1d6a4c',
         background_color: '#ffffff',
         display: 'standalone',

@@ -34,13 +34,12 @@ export function route(i: RouteInput): RouteDecision {
   switch (i.level) {
     case 'user-detail':
       return dev
-        ? { mode: 'ONLY_ON_DEVICE', side: 'device', reason: 'Your own transactions never leave this device.' }
+        ? { mode: 'ONLY_ON_DEVICE', side: 'device', reason: 'Your own transactions are classified on this device and are not sent.' }
         : { mode: 'LOCAL_RULES', side: 'rules', reason: 'On-device model unavailable; using local keyword rules. Nothing is uploaded.' }
     case 'public-sample':
       if (dev) return { mode: 'PREFER_ON_DEVICE', side: 'device', reason: 'Public sample data; on-device model preferred.' }
-      return i.online
-        ? { mode: 'PREFER_ON_DEVICE', side: 'cloud', reason: 'Public sample data; on-device model unavailable, falling back to cloud.' }
-        : { mode: 'LOCAL_RULES', side: 'rules', reason: 'Public sample data; model unavailable and offline, using local rules.' }
+      // 實際行為：沒有裝置端模型時，示範資料也走本機規則，分類不上雲
+      return { mode: 'LOCAL_RULES', side: 'rules', reason: 'Public sample data; on-device model unavailable, using local keyword rules. Nothing is uploaded.' }
     case 'schema-only':
       if (i.online && i.consent) return { mode: 'PREFER_IN_CLOUD', side: 'cloud', reason: 'Only column structure is shared; cloud writes the query plan.' }
       return dev

@@ -84,3 +84,14 @@ describe('批次分類', () => {
     expect(ev.every((e) => !e.batch)).toBe(true)
   })
 })
+
+describe('固定樣式與出境清單', () => {
+  it('選了不送（固定樣式）之後，同一題仍可再走出境清單', async () => {
+    const { AskSession, askFixed } = await import('./cloudtasks')
+    const session = new AskSession()
+    const out = await askFixed(session, { log: () => {} }, 'What are my top spending categories?', 'test')
+    expect(out.plan).not.toBeNull()
+    expect(session.cache.has(AskSession.key('What are my top spending categories?'))).toBe(false)
+    expect((await askFixed(session, { log: () => {} }, 'What are my top spending categories?', 'test')).cached).toBe(true)
+  })
+})

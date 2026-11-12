@@ -73,6 +73,8 @@ export default function App() {
   /** 目前準備送出的出境清單；雲端呼叫寫時間線時一併記進帳本 */
   const outbound = useRef<Manifest | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const classifyBtn = useRef<HTMLButtonElement>(null)
+  const wasBusy = useRef(false)
 
   useEffect(() => {
     checkAvailability().then(setAvail)
@@ -125,6 +127,15 @@ export default function App() {
     return uniqueKeys.filter((k) => !doneSet.has(k)).slice(0, prog.batch)
   }, [busy, prog, uniqueKeys])
   const workingId = workingKeys.join('|')
+
+  // 鍵盤使用者：載入檔案後把焦點放到「Classify」；分類結束（按鈕恢復可用）也放回去，避免焦點掉到頁面頂端
+  useEffect(() => {
+    if (fileName && txs.length > 0 && !isRestored && !busy && document.activeElement === document.body) classifyBtn.current?.focus()
+  }, [fileName, txs.length, isRestored, busy])
+  useEffect(() => {
+    if (wasBusy.current && !busy && document.activeElement === document.body) classifyBtn.current?.focus()
+    wasBusy.current = busy
+  }, [busy])
 
   // 分類中把正在處理的那一列捲進表格可視範圍，讓逐筆亮起看得到
   useEffect(() => {
@@ -371,7 +382,7 @@ export default function App() {
                 </div>
                 <div className="source-actions">
                   <DropZone compact dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
-                  <button className="btn btn-primary" disabled={busy || txs.length === 0} onClick={classify}>
+                  <button ref={classifyBtn} className="btn btn-primary" disabled={busy || txs.length === 0} onClick={classify}>
                     {busy ? 'Classifying…' : ready ? 'Classify again' : 'Classify on this device'}
                   </button>
                 </div>
@@ -474,6 +485,7 @@ export default function App() {
                   <h2 id="tx-title" className="card-title">Transactions</h2>
                   <span className="card-meta mono">{doneCount} / {txs.length} categorized</span>
                 </div>
+                <a className="skip-inline" href="#ask-title">Skip the table, go to questions</a>
                 <div className="scroll">
                   <table className={`table ${busy ? 'live' : ''}`}>
                     <thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col" className="num">Amount</th><th scope="col">Category</th></tr></thead>

@@ -113,7 +113,7 @@ describe('route', () => {
   })
   it('示範資料：裝置端優先，沒有就改雲端，離線用規則', () => {
     expect(route({ ...base, level: 'public-sample' }).side).toBe('device')
-    expect(route({ ...base, level: 'public-sample', deviceModel: 'unavailable' }).side).toBe('cloud')
+    expect(route({ ...base, level: 'public-sample', deviceModel: 'unavailable' }).side).toBe('rules')
     expect(route({ ...base, level: 'public-sample', deviceModel: 'unavailable', online: false }).side).toBe('rules')
   })
   it('結構：需同意才送雲端，離線改裝置端固定樣式', () => {

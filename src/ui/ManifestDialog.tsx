@@ -3,14 +3,34 @@ import { useEffect, useRef } from 'react'
 import type { Manifest } from '../lib/cloudtasks'
 import { IconCloud, IconDevice, IconGate } from './icons'
 
+// 記住對話框以外最後一個有焦點的元素：按鈕一按下去就會暫時停用而失去焦點，開啟時再讀 activeElement 會是 body
+let lastOutside: HTMLElement | null = null
+if (typeof document !== 'undefined') {
+  document.addEventListener('focusin', (e) => {
+    const t = e.target
+    if (t instanceof HTMLElement && !t.closest('dialog')) lastOutside = t
+  })
+}
+
 export function ManifestDialog({ m, onSend, onCancel, cancelText }: { m: Manifest; onSend: () => void; onCancel: () => void; cancelText: string }) {
   const ref = useRef<HTMLDialogElement>(null)
   const noRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const d = ref.current
+    const opener = lastOutside
     if (d && !d.open) d.showModal()
     noRef.current?.focus()
-    return () => { if (d?.open) d.close() }
+    return () => {
+      if (d?.open) d.close()
+      // 對話框被移除時瀏覽器不會自動還焦點；按鈕在處理中可能暫時停用，等它恢復再還
+      let tries = 0
+      const back = () => {
+        if (!opener || !opener.isConnected || document.activeElement !== document.body) return
+        if (!(opener as HTMLButtonElement).disabled) { opener.focus(); return }
+        if (++tries < 40) setTimeout(back, 150)
+      }
+      setTimeout(back, 0)
+    }
   }, [])
   const kept = m.notIncluded.replace(/^Not included:\s*/i, '').split(/,\s*/)
   return (

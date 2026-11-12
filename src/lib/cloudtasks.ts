@@ -78,6 +78,8 @@ export const MAX_CLOUD_CALLS = 10
 /** 每個瀏覽階段一個：同一問題快取、雲端呼叫上限。 */
 export class AskSession {
   cache = new Map<string, AskOutcome>()
+  /** 固定樣式的結果另放一份：不能擋住出境清單（選了不送之後，同一題還要能改選送出） */
+  fixedCache = new Map<string, AskOutcome>()
   cloudCalls = 0
   maxCalls: number
   constructor(maxCalls = MAX_CLOUD_CALLS) { this.maxCalls = maxCalls }
@@ -98,7 +100,9 @@ const tm = (d: AskDeps) => (d.now ?? (() => performance.now()))()
 /** 固定樣式：裝置端模型選（ONLY_ON_DEVICE）；沒有就用關鍵字比對。 */
 export async function askFixed(session: AskSession, deps: AskDeps, question: string, why: string): Promise<AskOutcome> {
   const key = AskSession.key(question)
-  const hit = session.cache.get(key)
+  // 固定樣式結果連同「為什麼用固定樣式」一起當鍵：雲端失敗退回時，不能顯示先前『選了不送』的說明
+  const fkey = `${key}|${why}`
+  const hit = session.cache.get(key) ?? session.fixedCache.get(fkey)
   if (hit) return { ...hit, cached: true }
   let out: AskOutcome | null = null
   if (deps.deviceChoose) {
@@ -118,7 +122,7 @@ export async function askFixed(session: AskSession, deps: AskDeps, question: str
       ? { plan, source: 'rules', note: `Fixed pattern chosen by keywords. ${why}`, cached: false }
       : { plan: null, source: 'none', note: 'Could not map that question to one of the six fixed patterns. Try an example question.', cached: false }
   }
-  if (out.plan) session.cache.set(key, out)
+  if (out.plan) session.fixedCache.set(fkey, out)
   return out
 }
 

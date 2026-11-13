@@ -8,7 +8,7 @@ import { normalizeDesc } from './lib/normalize'
 import { spendByCategory, type Classified } from './lib/aggregate'
 import { route, type DataLevel, type Mode, type Side, type TimelineEntry } from './lib/router'
 import { APP_CHECK_MODE, CLOUD_CONFIGURED } from './firebase'
-import { cspNote } from './lib/disclosure'
+import { ADVICE_DISCLAIMER, cspNote } from './lib/disclosure'
 import { createDeviceModel, firebaseCloudCall, type DeviceModel } from './lib/ai'
 import { EXAMPLE_QUESTIONS, PATTERN_SCHEMA, PATTERN_SYSTEM, runPlan, type PlanResult } from './lib/plan'
 import {
@@ -685,6 +685,7 @@ export default function App() {
           <section className="card advice" aria-labelledby="advice-title">
             <h3 id="advice-title" className="card-title">Budget advice</h3>
             <p className="fine">Sends whole-number category percentages only. No transactions, merchants, dates or amounts.</p>
+            <p className="fine advice-note">{ADVICE_DISCLAIMER}</p>
             <button className="btn btn-cloud" disabled={!ready || !cloudOk || askBusy} onClick={prepareAdvice}>Review what would be sent</button>
             {!ready && <p className="fine">Classify a statement first.</p>}
             {askBusy && phase && phase.label.includes('budget advice') && (

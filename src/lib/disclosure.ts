@@ -48,6 +48,10 @@ export function appCheckDisclosure(mode: AppCheckMode): Disclosure | null {
   return null
 }
 
+/** 預算建議區塊的固定說明：依支出比例給的一般性建議，不是專業意見。 */
+export const ADVICE_DISCLAIMER =
+  'These are general budgeting suggestions based on your spending shares. They are not investment, tax or personal financial advice.'
+
 /**
  * 出境清單標題下的位元組說明：計數只算清單上的文字，不是整個請求。
  * 回傳的字串接在「N bytes」後面（介面把 N bytes 加粗）。

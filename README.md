@@ -34,6 +34,8 @@ Classification is hard-wired to `ONLY_ON_DEVICE`, and `src/lib/ai.ts` is the onl
 
 Your question is free text, so anything you type into it is sent if you approve. Read the dialog first.
 
+Budget advice is general. It is based on your spending shares and is not investment, tax or personal financial advice. The page says so next to the Budget advice button.
+
 The cloud is treated as not configured until all six Firebase settings are filled in (see below). In that state the app makes no cloud request and the cloud features are disabled. Everything else keeps working.
 
 ## What the page shows you

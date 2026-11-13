@@ -25,3 +25,8 @@ dist-ssr
 
 # Firebase CLI 的本機快取（部署時產生）
 .firebase/
+
+# 環境變數檔一律不進版控（範例檔除外）
+.env
+.env.*
+!.env.example

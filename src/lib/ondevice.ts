@@ -22,7 +22,7 @@ export async function checkAvailability(): Promise<Availability> {
   }
 }
 
-/** 批次大小預設值；1 表示逐筆（速度實驗後的採用結果，見 STATUS.md） */
+/** 批次大小預設值；1 表示逐筆（速度實驗後的採用結果，見 README 的 Known limitations） */
 export const DEFAULT_BATCH_SIZE = 1
 
 export const CLASSIFY_SCHEMA = { type: 'string', enum: [...CATEGORIES] }

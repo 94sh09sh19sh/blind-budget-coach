@@ -16,7 +16,8 @@ export type Side = 'device' | 'cloud' | 'rules' | 'none'
 
 export interface RouteInput {
   level: DataLevel
-  deviceModel: 'available' | 'unavailable'
+  /** downloadable：模型可下載或下載中、但還沒下載好；使用者按分類時才會被問要不要下載 */
+  deviceModel: 'available' | 'downloadable' | 'unavailable'
   online: boolean
   consent: boolean
 }
@@ -28,15 +29,21 @@ export interface RouteDecision {
   reason: string
 }
 
+export const NOT_DOWNLOADED_REASON =
+  'The on-device model is not downloaded. Classify asks you to choose: download it (about 4 GB) or use local keyword rules. Neither makes a cloud request from this page.'
+
 export function route(i: RouteInput): RouteDecision {
   const dev = i.deviceModel === 'available'
+  const notYet = i.deviceModel === 'downloadable'
   switch (i.level) {
     case 'user-detail':
+      if (notYet) return { mode: 'LOCAL_RULES', side: 'rules', reason: NOT_DOWNLOADED_REASON }
       return dev
         ? { mode: 'ONLY_ON_DEVICE', side: 'device', reason: 'Your own transactions are classified on this device. This step makes no network request.' }
         : { mode: 'LOCAL_RULES', side: 'rules', reason: 'On-device model unavailable; using local keyword rules. This step makes no network request.' }
     case 'public-sample':
       // 分類一律以 ONLY_ON_DEVICE 呼叫 SDK（示範資料也一樣）：改用 PREFER_ON_DEVICE 的話，沒有模型時 SDK 會不經出境清單就送雲端
+      if (notYet) return { mode: 'LOCAL_RULES', side: 'rules', reason: NOT_DOWNLOADED_REASON }
       if (dev) return { mode: 'ONLY_ON_DEVICE', side: 'device', reason: 'Public sample data; classified by the on-device model.' }
       // 沒有裝置端模型時，示範資料也走本機規則，分類不上雲
       return { mode: 'LOCAL_RULES', side: 'rules', reason: 'Public sample data; on-device model unavailable, using local keyword rules. This step makes no network request.' }

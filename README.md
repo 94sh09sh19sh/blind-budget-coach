@@ -88,7 +88,7 @@ default-src 'self'; script-src 'self' https://www.google.com/recaptcha/ https://
 ## Requirements
 
 - Desktop Chrome with the built-in Prompt API and its on-device model. It was tested on Chrome 157 on Windows 11. Other Chrome versions, operating systems and low-spec machines were not tested. See Chrome's documentation on built-in AI for the current hardware and storage requirements.
-- The first use downloads the on-device model (about 4 GB). Creating the model needs a user gesture, so classification starts from a button click.
+- The on-device model is about 4 GB. If it is not downloaded yet, pressing Classify does not start the download. The page asks you to choose: download the model (done once by Chrome) and then classify, or classify this time with local keyword rules (no download, no cloud request). "Classify again" offers the choice again. Questions use keyword matching until the model is downloaded. Creating the model needs a user gesture, so the download can only start from the button you press.
 - English text. The app declares English (`en`) as input and output language for the model, and the samples and category names are English.
 - A secure context (`https`, or `localhost` for local runs).
 - Without the model, the app still runs. It uses local keyword rules for classification and keyword matching for the six fixed questions.
@@ -153,6 +153,7 @@ Tested in a real browser (Chrome 157, the dev server or the built preview):
 - Classifying the 60-row sample on device (58 rows by the model, 2 payroll-deposit rows by the local rule, shown separately in the summary and the timeline), with zero requests to hosts other than localhost during classification (page-level observation through the Chrome DevTools Protocol; requests made by the browser itself are not visible this way).
 - Offline load and classification of the built app, and the six example questions offline.
 - Corrections, persistence after a reload, and erase.
+- The "model not downloaded" state, simulated by overriding the result of `LanguageModel.availability()` (also for "downloading" and "unavailable"): Classify shows the choice, nothing calls the model before you choose, the rules path is labeled Rules in the route line, the timeline and the summary, asking a question afterwards still does not start a download, and "Classify again" offers the choice again.
 - The cloud path against a real Firebase project with App Check (debug token): outbound dialog, approved requests, cached repeat questions, budget advice, offline disable and recovery. 13 free-form question runs (including re-tests after a fix) matched direct computation from the CSV.
 - The six fixed patterns chosen by the on-device model, using the six example questions only. After a Chrome restart the first one took about 35 seconds, and the loading note appeared after 3 seconds.
 - The layout with no on-device model (simulated by removing the Prompt API), the page at widths from 900 px up, and the keyboard path through the main flow.
@@ -167,7 +168,7 @@ Not tested:
 
 - The production reCAPTCHA Enterprise App Check path (only the debug-token path was exercised).
 - `PREFER_IN_CLOUD` falling back to the on-device model when the cloud is unreachable, rate limiting (HTTP 429) and API-key errors.
-- The model download progress bar and a failed download (the model was already present), other Chrome versions, the CPU path, low-spec machines.
+- A real model download started from the choice (only simulated, with a stubbed `create()` that throws), the download progress bar and a failed download, other Chrome versions, the CPU path, low-spec machines.
 - The service worker update flow.
 
 ## Known limitations

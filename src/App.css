@@ -221,6 +221,15 @@ tr.done select.cat { border-color: var(--device-line); color: var(--device-ink);
 .nomodel-grid dt { font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--cloud-ink); }
 .nomodel-grid dd { margin: 2px 0 0; font-size: var(--fs-sm); }
 
+/* 模型還沒下載時的選項 */
+.modelchoice { border-color: var(--cloud-line); background: var(--cloud-soft); margin-top: var(--sp-3); }
+.modelchoice .card-title { color: var(--cloud-ink); font-size: var(--fs-md); }
+.mc-lead { margin: var(--sp-2) 0 var(--sp-3); font-size: var(--fs-sm); max-width: 72ch; }
+.mc-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+.mc-option { padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }
+.mc-option .btn { width: 100%; justify-content: center; }
+@media (max-width: 760px) { .mc-options { grid-template-columns: minmax(0, 1fr); } }
+
 /* ---- 出境清單對話框 ---- */
 .gate-dialog { width: min(980px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); padding: 0; border: 0; border-radius: var(--r-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); overflow: hidden; display: flex; flex-direction: column; }
 .gate-dialog:not([open]) { display: none; }

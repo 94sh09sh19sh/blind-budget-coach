@@ -20,6 +20,8 @@ import {
   eraseAll, loadLastRun, loadLedger, loadOverrides, loadTimeline, saveLastRun, saveLedger, saveOverrides, saveTimeline, type LedgerEntry, type RunCounts,
 } from './lib/store'
 import { ManifestDialog } from './ui/ManifestDialog'
+import { ModelChoice } from './ui/ModelChoice'
+import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON } from './lib/modelchoice'
 import { IconAlert, IconCheck, IconCloud, IconDevice, IconGate, IconRules, IconUpload, Logo } from './ui/icons'
 
 type Engine = 'device' | 'rules' | null
@@ -56,6 +58,8 @@ export default function App() {
   const [engine, setEngine] = useState<Engine>(null)
   const [busy, setBusy] = useState(false)
   const [dl, setDl] = useState<number | null>(null)
+  /** 模型可下載但還沒下載時，按分類後顯示選項（下載或本機規則）；null 表示沒有在問 */
+  const [modelChoice, setModelChoice] = useState<null | 'downloadable' | 'downloading'>(null)
   const [prog, setProg] = useState<ClassifyProgress | null>(null)
   const [phase, setPhase] = useState<Phase | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -113,7 +117,7 @@ export default function App() {
   const uniqueKeys = useMemo(() => [...new Set(txs.map((t) => normalizeDesc(t.desc)))], [txs])
   const doneCount = classified.filter((t) => t.category).length
   const modelOk = avail === 'available' || avail === 'downloadable' || avail === 'downloading'
-  const decision = route({ level, deviceModel: modelOk ? 'available' : 'unavailable', online, consent: false })
+  const decision = route({ level, deviceModel: avail === 'available' ? 'available' : avail === 'downloadable' || avail === 'downloading' ? 'downloadable' : 'unavailable', online, consent: false })
   const columns: ColumnInfo[] = [
     { name: cols.date || 'date', type: 'date' },
     { name: cols.description || 'description', type: 'text' },
@@ -156,6 +160,7 @@ export default function App() {
 
   function load(text: string, name: string, lvl: DataLevel) {
     const p = parseCsv(text)
+    setModelChoice(null)
     setCsv(p); setRestored([]); setCols(guessColumns(p.headers)); setSignSel('auto'); setLevel(lvl); setFileName(name); setIsRestored(false)
     setCats(new Map()); setEngine(null); setNote(''); setAnswer(null); setAdvice(null); setPending(null); setProg(null); setLastClassifyMs(null); setRunCounts(null)
   }
@@ -195,13 +200,26 @@ export default function App() {
     log({ task: `classify ${txs.length} rows (keyword rules)`, mode: 'LOCAL_RULES', side: 'rules', ms: performance.now() - t0, bytesSent: 0, reason })
   }
 
-  // 必須由 click 觸發：裝置端模型的建立需要使用者手勢
-  async function classify() {
-    setBusy(true); setNote(''); setCats(new Map()); setProg(null); setLastClassifyMs(null); setRunCounts(null)
+  /**
+   * 必須由 click 觸發：裝置端模型的建立需要使用者手勢。
+   * 模型可下載但還沒下載（約 4 GB）時不會自動下載：先顯示選項，使用者按「Download the model」（approvedDownload）才建立模型。
+   */
+  async function classify(approvedDownload = false) {
+    setBusy(true)
     const t0 = Date.now()
+    let asked = false
     try {
       const a = await checkAvailability(); setAvail(a)
-      const d = route({ level, deviceModel: a === 'available' || a === 'downloadable' || a === 'downloading' ? 'available' : 'unavailable', online, consent: false })
+      const path = decideClassifyPath(a, approvedDownload)
+      if (path === 'ask') {
+        // 還沒清掉先前的分類結果；等使用者選了才動
+        asked = true
+        setModelChoice(a === 'downloading' ? 'downloading' : 'downloadable')
+        return
+      }
+      setModelChoice(null)
+      setNote(''); setCats(new Map()); setProg(null); setLastClassifyMs(null); setRunCounts(null)
+      const d = route({ level, deviceModel: path === 'device' ? 'available' : 'unavailable', online, consent: false })
       if (d.side === 'device') {
         setDl(0)
         startPhase({ label: 'Starting the on-device model', detail: 'First start takes about 15–40 s.', where: 'device' })
@@ -251,7 +269,15 @@ export default function App() {
       runRules('On-device model failed to start; fell back to local rules.', overrides)
       console.error('On-device model failed to start', err)
       setNote('The on-device model could not start on this browser or machine; used local keyword rules instead.')
-    } finally { setBusy(false); setPhase(null); setLastClassifyMs(Date.now() - t0) }
+    } finally { setBusy(false); setPhase(null); if (!asked) setLastClassifyMs(Date.now() - t0) }
+  }
+
+  /** 使用者選了「本機關鍵字規則」：不下載模型、不連雲端；摘要、路由說明與時間線都標示 Rules。 */
+  function classifyWithRules() {
+    setModelChoice(null)
+    setNote(''); setCats(new Map()); setProg(null); setRunCounts(null)
+    runRules(RULES_CHOSEN_REASON, overrides)
+    setNote(RULES_CHOSEN_REASON)
   }
 
   async function correct(t: Tx, cat: Category) {
@@ -272,7 +298,8 @@ export default function App() {
   // ---- 盲眼分析 ----
   function deps(): AskDeps {
     const d: AskDeps = { log, cloud: cloudOk ? firebaseCloudCall : undefined }
-    if (modelOk) {
+    if (canUseModelNow(avail)) {
+      // 只有模型已經下載好才建立：可下載但還沒下載時，這裡建立會在背景觸發約 4 GB 的下載，所以改走關鍵字比對。
       // 固定樣式用的裝置端模型等到真的要選樣式才建立：走雲端時不必先等它。建立或呼叫失敗就丟錯，由 askFixed 退回關鍵字比對。
       // 模型重新啟動後（例如 Chrome 重開、閒置後）第一次呼叫要十幾到三十幾秒：超過 3 秒還沒回來，就把原因寫在等待畫面上。
       d.deviceChoose = async (q) => {
@@ -377,7 +404,7 @@ export default function App() {
             <p className="zone-sub">Transactions, categories and query results are computed and stored here (IndexedDB). Since last erase: {plural(deviceCalls, 'on-device call')}.</p>
           </div>
 
-          {!modelOk && avail !== 'checking' && <NoModel avail={avail} />}
+          {avail !== 'available' && avail !== 'checking' && <NoModel avail={avail} />}
 
           {!hasData ? (
             <section className="card empty" aria-labelledby="empty-title">
@@ -406,7 +433,7 @@ export default function App() {
                 </div>
                 <div className="source-actions">
                   <DropZone compact dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
-                  <button ref={classifyBtn} className="btn btn-primary" disabled={busy || txs.length === 0} onClick={classify}>
+                  <button ref={classifyBtn} className="btn btn-primary" disabled={busy || txs.length === 0} onClick={() => classify()}>
                     {busy ? 'Classifying…' : ready ? 'Classify again' : 'Classify on this device'}
                   </button>
                 </div>
@@ -459,6 +486,10 @@ export default function App() {
                 <code className="mode">{decision.mode}</code>
                 <span>{decision.reason}</span>
               </div>
+
+              {modelChoice && !busy && (
+                <ModelChoice state={modelChoice} onRules={classifyWithRules} onDownload={() => classify(true)} />
+              )}
 
               {busy && (
                 <div className="progress" role="status" aria-live="polite">
@@ -771,7 +802,7 @@ function NoModel({ avail }: { avail: Availability }) {
       <h2 id="nomodel-title" className="card-title"><IconAlert size={18} /> {downloadable ? 'The on-device model is not downloaded yet' : 'No on-device model in this browser'}</h2>
       <dl className="nomodel-grid">
         <div><dt>Detected</dt><dd>{avail === 'unsupported' ? 'Prompt API not found.' : avail === 'unavailable' ? 'Prompt API present, model unavailable on this machine.' : avail === 'downloading' ? 'Model is downloading.' : 'Model can be downloaded (about 4 GB, first run only).'}</dd></div>
-        <div><dt>Will use instead</dt><dd>{downloadable ? 'Press Classify to start the download; rows are classified when it finishes.' : 'Local keyword rules, run in this page. This step makes no network request.'}</dd></div>
+        <div><dt>Will use instead</dt><dd>{downloadable ? 'Press Classify and choose: download the model first, or use local keyword rules now. Nothing is downloaded until you choose.' : 'Local keyword rules, run in this page. This step makes no network request.'}</dd></div>
         <div><dt>To enable</dt><dd>Desktop Chrome with the built-in model. Check its status at <code>chrome://on-device-internals</code>.</dd></div>
       </dl>
     </section>

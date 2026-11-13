@@ -29,9 +29,18 @@ describe('Content-Security-Policy 的唯一來源', () => {
 
   it('firebase.json 原有的快取標頭仍在', () => {
     const keys = firebaseJson.hosting.headers.map((h) => `${h.source}:${h.headers.map((x) => x.key).join(',')}`)
+    expect(keys).toContain('/:Cache-Control')
     expect(keys).toContain('/sw.js:Cache-Control')
     expect(keys).toContain('/index.html:Cache-Control')
     expect(keys).toContain('/assets/**:Cache-Control')
+  })
+
+  it('首頁（/）和 /index.html 一樣回 no-cache，回訪者重新部署後不會拿到一小時內的舊首頁', () => {
+    for (const src of ['/', '/index.html']) {
+      const rule = firebaseJson.hosting.headers.find((h) => h.source === src)
+      expect(rule, src).toBeDefined()
+      expect(rule!.headers.find((x) => x.key === 'Cache-Control')?.value, src).toBe('no-cache')
+    }
   })
 
   it('meta 版 = 標頭版去掉 frame-ancestors（meta 不支援這個指令）', () => {

@@ -4,7 +4,7 @@ Blind Budget Coach is a budgeting coach that reads your bank statement CSV in yo
 
 Built for the Firebase #BuildHybridAI hackathon. All model inference goes through Firebase AI Logic (`firebase/ai`) with hybrid inference. The only direct Chrome API call is `LanguageModel.availability()`, which checks whether the on-device model is present.
 
-Live demo: (added after deployment)
+Live demo: https://blind-budget-coach.web.app
 
 ## Who it is for
 
@@ -83,7 +83,7 @@ default-src 'self'; script-src 'self' https://www.google.com/recaptcha/ https://
 - No wildcard hosts, no `unsafe-eval`, no `unsafe-inline` for scripts or styles. The reCAPTCHA entries follow Google's reCAPTCHA documentation on CSP. Each host is either called by SDK code in the bundle (`firebasevertexai.googleapis.com`, `content-firebaseappcheck.googleapis.com`, `www.google.com/recaptcha/enterprise.js`) or named in Google's reCAPTCHA documentation on CSP. A search of the built JavaScript found no other host that the page requests.
 - How to check it yourself: view the page source of the deployed site and find the `Content-Security-Policy` meta tag, or open DevTools, Network, select the document request and read the `Content-Security-Policy` response header. To see the browser enforce it, type `fetch('https://any-other-host.test/')` in the console; it is refused with a message naming `connect-src`.
 - What it does and does not cover: it governs this page's code (scripts, fetch and XHR, frames, images, styles, workers). It does not govern what the browser does by itself, such as Chrome downloading the on-device model or checking for component updates. Inside the allowed hosts it says nothing about what is sent: for example, what Google's reCAPTCHA script sends to `www.google.com/recaptcha/` is decided by that script (see "App Check and reCAPTCHA").
-- Tested locally on `npm run preview` (Chrome 157): page load, classification of the 60-row sample on device, the six example questions, offline reload through the service worker, and the PWA manifest and icons all ran with no policy violation in the console. Pressing Send on localhost loads the reCAPTCHA scripts and frame with no violation either (the site key only accepts the real domain, so the token request fails there, as expected). Not tested locally: the full App Check and Gemini path on the real domain. If the console of the deployed site shows a violation from reCAPTCHA, the first suspects are `style-src` (reCAPTCHA styling its badge) and `img-src`, which would need a narrow addition.
+- Tested locally on `npm run preview` (Chrome 157): page load, classification of the 60-row sample on device, the six example questions, offline reload through the service worker, and the PWA manifest and icons all ran with no policy violation in the console. Pressing Send on localhost loads the reCAPTCHA scripts and frame with no violation either (the site key only accepts the real domain, so the token request fails there, as expected). On the deployed site (see "Verification status"), the full App Check and Gemini path ran in two browsers with no violation event and no console error. If a later change makes the console show a violation from reCAPTCHA, the first suspects are `style-src` (reCAPTCHA styling its badge) and `img-src`, which would need a narrow addition.
 
 ## Requirements
 
@@ -158,18 +158,31 @@ Tested in a real browser (Chrome 157, the dev server or the built preview):
 - The six fixed patterns chosen by the on-device model, using the six example questions only. After a Chrome restart the first one took about 35 seconds, and the loading note appeared after 3 seconds.
 - The layout with no on-device model (simulated by removing the Prompt API), the page at widths from 900 px up, and the keyboard path through the main flow.
 
+Tested on the public URL (https://blind-budget-coach.web.app, 2026-11-13), in an ordinary desktop Chrome with no on-device model, so classification used the local keyword rules (the browser version was not recorded). This is the production reCAPTCHA Enterprise App Check path:
+
+- An earlier build. The page load contacted only its own host. Pressing Send ran the production path and it worked: the reCAPTCHA Enterprise script, the token exchange at `content-firebaseappcheck.googleapis.com`, and `generateContent` at `firebasevertexai.googleapis.com`. Of the six example questions sent to the cloud, five produced an accepted plan on the first attempt. "How much do I spend each month?" was rejected twice by the plan validator and then answered with a fixed pattern. Budget advice worked. After a reload the data was still there, and Erase emptied it.
+- The build with the Content-Security-Policy (commit `9ff5ca7`). Both the response headers and the HTML carry the policy. After the second load the service worker had switched to the new version. "How much do I spend each month?" was accepted on the first attempt (2026-01: 2,228.90 over 19 rows, 2026-02: 1,810.24 over 17, 2026-03: 826.62 over 19, on the locally classified data). No Content-Security-Policy violation event and no console error were seen. The outbound dialog lists the App Check and reCAPTCHA note, and the budget advice block shows its boundary note.
+
+Tested on the public URL in a separate Chrome 157 test profile on Windows 11 that has the on-device model and had never opened the site (site data checked and empty before the first load):
+
+- Load. The load event fired after about 0.5 s. Every request went to the site's own origin (page files and the service worker's precache fetches). The page reported "On-device model ready", the service worker registered and activated, and the manifest, the four PNG icons and the favicon returned 200.
+- Classification. The 60-row sample took 76.8 s: 58 rows by the on-device model and 2 by the payroll-deposit rule. No request went to another host during classification (page-level observation). By eye, 60 of 60 categories looked reasonable. The spending-by-category chart and the "bytes sent" counter (0) were visible.
+- Offline (emulated with the Chrome DevTools Protocol). The page reloaded from the service worker in about 0.13 s and restored the last statement. After Erase, the sample loaded offline, and classification took 79.8 s (58 and 2 again) with no request to another host. The six example questions were answered by fixed patterns chosen by the on-device model, in 2.9 to 4.1 s each, and the numbers matched a direct computation from the CSV on the categories shown on screen. The cloud column said "You are offline. Cloud features are off; everything else works." and "Review what would be sent" was disabled.
+- Back online. After going back online and reloading, three cloud requests were sent, each after approval in the dialog: the Groceries question, the monthly question and budget advice. The App Check token exchange returned 200 and each `generateContent` returned 200. Both plans were accepted on the first attempt and matched the CSV (Groceries 978.32 over 14 rows; the monthly totals above). In each request body the instruction text, the message and the response structure were identical to what the dialog listed, and the dialog's byte count (2,472, 2,469 and 786) equalled the UTF-8 length of those three parts. The bodies on the wire were 2,731, 2,728 and 1,011 bytes. Searching each body for every description, amount and date in the CSV found none. A new App Check token exchange was needed only for the first request.
+- Reload and erase. After a reload the ledger (3 requests, 5,727 bytes) and the timeline were still there. Erase emptied them, and they stayed empty after another reload.
+- Policy and console. `/`, `/sw.js`, `/index.html` and `/assets/...` all carry the `Content-Security-Policy` header. Across the whole round there was no violation event and no console error, apart from one error from a deliberate offline control request. As a control for the collector, a deliberate fetch to a non-resolving host from the page was blocked by `connect-src`, reported as a violation, and made no request.
+
 Covered by unit tests only:
 
 - Debit and Credit split columns and the automatic sign guess (also tried on synthetic files).
-- The 45 s cloud timeout, the cap of 10 cloud calls per session, and the retry-then-fallback logic for invalid plans (invalid-plan rejection is covered by 21 cases).
+- The 45 s cloud timeout, the cap of 10 cloud calls per session, and the retry-then-fallback logic for invalid plans (invalid-plan rejection is covered by 21 cases). The retry-then-fallback path was also seen once on the public URL with an earlier build, as described above; the timeout and the cap were not.
 - Batched classification (several merchants per call), which exists in the code but is switched off.
 
 Not tested:
 
-- The production reCAPTCHA Enterprise App Check path (only the debug-token path was exercised).
 - `PREFER_IN_CLOUD` falling back to the on-device model when the cloud is unreachable, rate limiting (HTTP 429) and API-key errors.
 - A real model download started from the choice (only simulated, with a stubbed `create()` that throws), the download progress bar and a failed download, other Chrome versions, the CPU path, low-spec machines.
-- The service worker update flow.
+- The service worker update flow, apart from the one switch to a new version noted above. The production App Check path was exercised from one machine in two browsers, and the token exchange succeeded in both. What a visitor sees when App Check refuses the token exchange (for example because of a low reCAPTCHA score) was not tested on the public URL.
 
 ## Known limitations
 
@@ -178,7 +191,7 @@ Not tested:
 - Fixed patterns. Without the cloud, a question maps to one of six fixed patterns: top categories, spending per month, top merchants, total in one category or at one named merchant, average purchase in one category, and count of purchases above an amount. Anything else answers "no result" and suggests an example question. With the cloud, a question that cannot be answered exactly with the plan fields (for example comparing two periods) is reported as out of scope instead of being approximated.
 - Batched classification (several merchants per call) was measured and left off. With five merchants per call it was 2.2 to 3.5 times faster on the two sets but lost 0.7 to 3.0 points of accuracy, so one merchant per call stays the default (`DEFAULT_BATCH_SIZE` in `src/lib/ondevice.ts`).
 - Cloud limits. The free tier has rate limits. The app allows 10 cloud calls per browsing session and waits at most 45 seconds for each. After a timeout the SDK call may still be running in the background, and its result is discarded. The "bytes sent" counter counts a failed request too, because it may have been sent. Byte counts are the UTF-8 length of the text listed in the dialog (instructions, message and response structure). They omit HTTP headers, JSON wrapping and App Check and reCAPTCHA traffic, so the requests in the Network panel are larger.
-- Local storage. The last statement, corrections, timeline and ledger are kept unencrypted in IndexedDB until you erase them.
+- Local storage. The last statement, corrections, timeline and ledger are kept unencrypted in IndexedDB until you erase them. "Erase all local data" clears those four. The Firebase SDK also keeps its own records in IndexedDB, and Erase does not clear them: an App Check token (`firebase-app-check-database`, created by the first approved send) and a heartbeat record (`firebase-heartbeat-database`). They do not contain your statement. Observed in Chrome 157 on the public URL.
 - Your own CSV files. Column guessing and the sign guess were checked on synthetic files only.
 - Language. English descriptions only.
 
@@ -186,6 +199,6 @@ Not tested:
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
 
-The sample merchants are fictional. Chrome, Gemini and Firebase are trademarks of Google LLC. This project is independent and is not affiliated with or endorsed by Google.
+The sample merchants are fictional. Chrome, Gemini, Firebase and reCAPTCHA are trademarks of Google LLC. This project is independent and is not affiliated with or endorsed by Google.
 
 <!-- token-lint: off -->

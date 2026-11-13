@@ -43,7 +43,7 @@ export function displayHost(source: string): string {
 
 /**
  * 不依主機清單的固定指令，都沒有放寬：
- * - style-src 只有 'self'（沒有 'unsafe-inline'）：建置出的 CSS 是同源檔案；React 的行內樣式（寬度條）走 CSSOM，不受 style-src 限制；
+ * - style-src 只有 'self'（沒有 'unsafe-inline'）：建置出的 CSS 是同源檔案；React 的內嵌樣式（寬度條）走 CSSOM，不受 style-src 限制；
  *   reCAPTCHA 的徽章也是用 CSSOM 設樣式（2026-11-13 在 localhost 預覽實測，按 Send 載入 reCAPTCHA 後沒有任何 CSP 違規，徽章樣式正常套用）。
  *   若部署後主控台出現 style-src 或 style-src-attr 的違規且來源是 reCAPTCHA，才需要放寬，見 README「Network allow-list」。
  * - img-src 只有 'self'：沒有 data: 圖片；PWA 圖示與 favicon 都是同源檔案。

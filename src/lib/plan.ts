@@ -41,13 +41,30 @@ function validIsoDate(s: unknown): s is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
 }
 
-/** 嚴格驗證：未知欄位、型別不對、值超出白名單一律拒絕。 */
-export function validatePlan(x: unknown): Validation {
-  if (!isObj(x)) return { ok: false, error: 'plan must be an object' }
-  if (x.unsupportedReason !== undefined) {
-    if (Object.keys(x).length !== 1 || typeof x.unsupportedReason !== 'string' || !x.unsupportedReason.trim() || x.unsupportedReason.length > 300)
-      return { ok: false, error: 'unsupportedReason must be the only key and a short non-empty string' }
-    return { ok: true, unsupported: x.unsupportedReason.trim() }
+/**
+ * 嚴格驗證：未知欄位、型別不對、值超出白名單一律拒絕。
+ *
+ * unsupportedReason 的處理（2026-11-13 公開網址實測後調整）：
+ * - 空字串、只有空白、null：模型在回應結構裡順手多帶的空欄位，當成沒有這個欄位，其餘照常嚴格驗證。
+ *   只剩這個空欄位、沒有任何計畫欄位時仍然拒絕。
+ * - 有內容而且是唯一的欄位：模型明說做不到，回傳 unsupported（呼叫端不退回固定樣式、不給數字）。
+ * - 有內容但同時帶了計畫欄位：仍然拒絕（呼叫端重試一次）。實測看過這種回應：計畫本身合法，但附了一句互相矛盾的理由；
+ *   不能判斷哪一邊才是模型的本意，而「模型說做不到」的題目不可用它順手給的近似計畫硬答，所以不採用。
+ * - 非字串（數字、物件、陣列、布林）或超過 300 字：拒絕。
+ */
+export function validatePlan(input: unknown): Validation {
+  if (!isObj(input)) return { ok: false, error: 'plan must be an object' }
+  let x: Record<string, unknown> = input
+  if (input.unsupportedReason !== undefined) {
+    const r = input.unsupportedReason
+    if (r === null || (typeof r === 'string' && r.trim() === '')) {
+      x = Object.fromEntries(Object.entries(input).filter(([k]) => k !== 'unsupportedReason'))
+      if (Object.keys(x).length === 0) return { ok: false, error: 'response had an empty unsupportedReason and no plan' }
+    } else {
+      if (typeof r !== 'string' || r.length > 300) return { ok: false, error: 'unsupportedReason must be a short string' }
+      if (Object.keys(input).length !== 1) return { ok: false, error: 'response had both an unsupportedReason and plan fields' }
+      return { ok: true, unsupported: r.trim() }
+    }
   }
   for (const k of Object.keys(x)) if (!PLAN_KEYS.includes(k)) return { ok: false, error: `unknown key: ${k}` }
   if (x.aggregate !== 'sum' && x.aggregate !== 'count' && x.aggregate !== 'avg') return { ok: false, error: 'aggregate must be sum, count or avg' }
@@ -123,7 +140,7 @@ export const PLAN_SCHEMA = {
     aggregate: { type: 'string', enum: ['sum', 'count', 'avg'] },
     sort: { type: 'string', enum: ['value_desc', 'value_asc', 'label_asc'] },
     limit: { type: 'integer', minimum: 1, maximum: 50 },
-    unsupportedReason: { type: 'string', description: 'Only when the question cannot be answered with the fields above; then omit every other field' },
+    unsupportedReason: { type: 'string', description: 'Only when the question cannot be answered with the fields above; then omit every other field. Leave this field out when the plan answers the question.' },
   },
 }
 

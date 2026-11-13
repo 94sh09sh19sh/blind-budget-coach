@@ -43,7 +43,8 @@ Plan fields (all optional except aggregate):
 - sort: "value_desc", "value_asc" or "label_asc"
 - limit: integer 1 to 50 (top N)
 Use only these fields. Resolve relative dates such as "last month" using the given today's date.
-If the question cannot be answered exactly with these fields (for example comparing two periods, percentage changes, forecasts, or anything that needs more than one query), do not approximate it with a different query. Return only {"unsupportedReason": "<one short sentence>"}.`
+If the question cannot be answered exactly with these fields (for example comparing two periods, percentage changes, forecasts, or anything that needs more than one query), do not approximate it with a different query. Return only {"unsupportedReason": "<one short sentence>"}.
+If the question can be answered with these fields, return only the plan and leave out unsupportedReason entirely. Do not combine unsupportedReason with plan fields.`
 
 export function buildPlanManifest(question: string, columns: ColumnInfo[], today: string, txCount: number): Manifest {
   const prompt = [

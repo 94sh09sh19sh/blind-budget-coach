@@ -168,10 +168,83 @@ describe('超出能力範圍', () => {
     const r = validatePlan({ unsupportedReason: 'needs two periods compared' })
     expect(r).toEqual({ ok: true, unsupported: 'needs two periods compared' })
   })
-  it('unsupportedReason 混著其他欄位、空字串、非字串都被拒', () => {
+  it('空字串、只有空白、null 的 unsupportedReason 當成沒有這個欄位：合法計畫照常通過', () => {
+    const plan = { groupBy: 'month', aggregate: 'sum', sort: 'label_asc', limit: 50 }
+    const expected = validatePlan(plan)
+    expect(expected.ok).toBe(true)
+    for (const empty of ['', '   ', '\n\t', null]) {
+      const r = validatePlan({ ...plan, unsupportedReason: empty })
+      expect(r).toEqual(expected)
+      expect(r.ok && r.plan && 'unsupportedReason' in r.plan).toBe(false)
+    }
+  })
+  it('空欄位不放寬其他檢查：未知鍵、不合法的值仍然被拒', () => {
+    expect(validatePlan({ aggregate: 'sum', unsupportedReason: '', foo: 1 }).ok).toBe(false)
+    expect(validatePlan({ aggregate: 'median', unsupportedReason: null }).ok).toBe(false)
+    expect(validatePlan({ aggregate: 'sum', limit: 99, unsupportedReason: ' ' }).ok).toBe(false)
+    expect(validatePlan({ groupBy: 'month', unsupportedReason: '' }).ok).toBe(false)
+  })
+  it('只剩空的 unsupportedReason、沒有計畫：被拒，且說明沒有計畫', () => {
+    for (const empty of ['', '  ', null]) {
+      const r = validatePlan({ unsupportedReason: empty })
+      expect(r.ok).toBe(false)
+      expect(!r.ok && r.error).toContain('no plan')
+    }
+  })
+  it('有內容的 unsupportedReason 加其他計畫欄位：被拒（不用模型自己說做不到的題目的近似計畫硬答）', () => {
+    // 2026-11-13 公開網址實測看到的回應形狀：合法計畫加一句互相矛盾的理由
+    const seen = {
+      groupBy: 'month', aggregate: 'sum', sort: 'label_asc', limit: 50,
+      unsupportedReason: 'Cannot group by month and sort by label or return full time series directly with this exact structure without aggregate.',
+    }
+    const r = validatePlan(seen)
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.error).toContain('both an unsupportedReason and plan fields')
     expect(validatePlan({ unsupportedReason: 'x', aggregate: 'sum' }).ok).toBe(false)
-    expect(validatePlan({ unsupportedReason: '  ' }).ok).toBe(false)
-    expect(validatePlan({ unsupportedReason: 5 }).ok).toBe(false)
+    expect(validatePlan({ unsupportedReason: 'x', filter: {} }).ok).toBe(false)
+  })
+  it('unsupportedReason 不是字串、或超過 300 字：被拒', () => {
+    for (const bad of [5, true, {}, [], ['x']]) expect(validatePlan({ unsupportedReason: bad }).ok).toBe(false)
+    expect(validatePlan({ unsupportedReason: 'x'.repeat(301) }).ok).toBe(false)
+    expect(validatePlan({ unsupportedReason: 'x'.repeat(300) }).ok).toBe(true)
+  })
+  it('有內容的 unsupportedReason 前後空白會去掉', () => {
+    expect(validatePlan({ unsupportedReason: '  needs two periods  ' })).toEqual({ ok: true, unsupported: 'needs two periods' })
+  })
+  it('雲端回「計畫加空的 unsupportedReason」：一次就採用，只呼叫一次', async () => {
+    const text = JSON.stringify({ groupBy: 'month', aggregate: 'sum', sort: 'label_asc', unsupportedReason: '' })
+    const cloud: CloudCall = async () => ({ text, source: 'cloud' })
+    const { deps, logs } = mkDeps({ cloud })
+    const s = new AskSession()
+    const q = 'How much do I spend each month?'
+    const r = await askCloud(s, deps, q, buildPlanManifest(q, COLS, '2026-11-13', 60))
+    expect(s.cloudCalls).toBe(1)
+    expect(r.source).toBe('cloud')
+    expect(r.plan).toEqual({ groupBy: 'month', aggregate: 'sum', sort: 'label_asc' })
+    expect(logs).toHaveLength(1)
+    expect(logs[0].reason).toBe('Plan accepted.')
+  })
+  it('雲端回「計畫加有內容的 unsupportedReason」：第一次被拒並重試；第二次乾淨就採用', async () => {
+    const mixed = JSON.stringify({ groupBy: 'month', aggregate: 'sum', sort: 'label_asc', limit: 50, unsupportedReason: 'Cannot do this.' })
+    const clean = JSON.stringify({ groupBy: 'month', aggregate: 'sum', sort: 'label_asc', limit: 50 })
+    let n = 0
+    const cloud: CloudCall = async () => ({ text: n++ === 0 ? mixed : clean, source: 'cloud' })
+    const { deps, logs } = mkDeps({ cloud })
+    const s = new AskSession()
+    const q = 'How much do I spend each month?'
+    const r = await askCloud(s, deps, q, buildPlanManifest(q, COLS, '2026-11-13', 60))
+    expect(s.cloudCalls).toBe(2)
+    expect(r.source).toBe('cloud')
+    expect(r.plan).not.toBeNull()
+    expect(logs[0].reason).toContain('Plan rejected')
+    expect(logs[0].reason).toContain('both an unsupportedReason and plan fields')
+    expect(logs[1].reason).toBe('Plan accepted.')
+  })
+  it('系統提示與回應結構都說明：能回答時不要輸出 unsupportedReason', () => {
+    const m = buildPlanManifest('x', COLS, '2026-11-13', 1)
+    expect(m.system).toContain('leave out unsupportedReason entirely')
+    expect(m.system).toContain('Do not combine unsupportedReason with plan fields')
+    expect(JSON.stringify(m.schema)).toContain('Leave this field out when the plan answers the question')
   })
   it('雲端回報超出能力：不退回固定樣式，不給數字', async () => {
     const cloud: CloudCall = async () => ({ text: '{"unsupportedReason":"It compares two years."}', source: 'cloud' })

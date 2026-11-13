@@ -38,7 +38,7 @@ const cspApplied = typeof document !== 'undefined' && document.querySelector('me
 const MODES: { mode: Mode; side: Side; use: string; why: string }[] = [
   { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Statements and samples', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere. Obvious payroll-deposit wording is decided by a local rule instead.' },
   { mode: 'PREFER_IN_CLOUD', side: 'cloud', use: 'Questions', why: 'The cloud writes a query plan from your question and column names, after you approve. Declined or offline: a fixed pattern is picked here.' },
-  { mode: 'ONLY_IN_CLOUD', side: 'cloud', use: 'Budget advice', why: 'Sends whole-number category percentages only, after you approve.' },
+  { mode: 'ONLY_IN_CLOUD', side: 'cloud', use: 'Budget advice', why: 'The text sent is whole-number category percentages, after you approve.' },
   { mode: 'LOCAL_RULES', side: 'rules', use: 'No model available', why: 'Keyword rules in this page. This step makes no network request.' },
 ]
 
@@ -313,7 +313,7 @@ export default function App() {
     try {
       if (p.kind === 'plan') {
         startPhase(sendIt
-          ? { label: 'Waiting for the cloud to write a query plan', detail: 'Usually 2–12 s; gives up after 45 s. Your data is not part of the request.', where: 'cloud' }
+          ? { label: 'Waiting for the cloud to write a query plan', detail: 'Usually 2–12 s; gives up after 45 s. The request is the text you approved in the dialog.', where: 'cloud' }
           : { label: 'Picking a fixed query pattern on this device', where: 'device' })
         const d = deps()
         show(p.question, sendIt ? await askCloud(session.current, d, p.question, p.manifest) : await askFixed(session.current, d, p.question, 'You chose not to send anything; using a fixed pattern.'))
@@ -347,7 +347,7 @@ export default function App() {
           <Logo />
           <div>
             <div className="brand-name">Blind Budget Coach</div>
-            <div className="brand-tag">Your statement is classified in this browser. Anything sent to the cloud is shown to you first.</div>
+            <div className="brand-tag">Your statement is classified in this browser. The text of each cloud request is listed for you before it is sent.</div>
           </div>
         </div>
         <div className="meter" role="status" aria-live="polite" aria-atomic="true">
@@ -381,11 +381,11 @@ export default function App() {
 
           {!hasData ? (
             <section className="card empty" aria-labelledby="empty-title">
-              <h2 id="empty-title" className="empty-title">See your spending without uploading your statement</h2>
+              <h2 id="empty-title" className="empty-title">Classify your statement on this device, and check what leaves it</h2>
               <ol className="steps">
                 <li><span className="step-n">1</span><div><b>Load a statement</b><span>A CSV from your bank, or a synthetic sample.</span></div></li>
                 <li><span className="step-n">2</span><div><b>Classify on this device</b><span>Each row is categorized here. This step makes no network request.</span></div></li>
-                <li><span className="step-n">3</span><div><b>Ask a question</b><span>The cloud sees only the text you approve at the gate.</span></div></li>
+                <li><span className="step-n">3</span><div><b>Ask a question</b><span>A question goes to the cloud only after you approve its exact text at the gate.</span></div></li>
               </ol>
               <div className="empty-actions">
                 <button className="btn btn-primary" onClick={() => loadSample('sample-statement-2.csv')}>Try sample · 60 rows</button>
@@ -570,7 +570,7 @@ export default function App() {
             </form>
             <p className="fine">
               {cloudOk
-                ? 'Before anything is sent, you see the exact text at the outbound gate. Declining uses a fixed pattern picked on this device.'
+                ? 'Before a cloud request is made, the outbound gate lists its exact text. Declining uses a fixed pattern picked on this device.'
                 : `${cloudWhy} Questions use fixed patterns (on-device model if available, otherwise keywords).`}
             </p>
             {askBusy && phase && !phase.label.includes('budget advice') && (
@@ -588,7 +588,7 @@ export default function App() {
                 <h3 className="answer-q">{answer.q}</h3>
                 <p className={`notice ${answer.outcome.unsupported ? 'notice-warn' : ''}`}>
                   <SideTag side={answer.outcome.source === 'none' ? 'none' : answer.outcome.source} />
-                  <span>{answer.outcome.note}{answer.outcome.cached ? ' (cached answer, nothing sent)' : ''}</span>
+                  <span>{answer.outcome.note}{answer.outcome.cached ? ' (cached answer, no new request)' : ''}</span>
                 </p>
                 {answer.result ? (
                   <table className="table result">
@@ -644,7 +644,7 @@ export default function App() {
         <aside className="zone zone-cloud" aria-labelledby="cloud-title">
           <div className="zone-head">
             <h2 id="cloud-title" className="zone-title"><IconCloud /> Cloud</h2>
-            <p className="zone-sub">Outside this device. Text crosses only through the outbound gate, after you press Send.</p>
+            <p className="zone-sub">Outside this device. This page makes a cloud request only after you press Send in the outbound gate, which lists the exact text first. You can check this in DevTools → Network.</p>
           </div>
 
           {!cloudOk && <p className="notice notice-warn"><IconAlert size={16} /><span>{cloudWhy} Cloud features are off; everything else works.</span></p>}
@@ -684,7 +684,7 @@ export default function App() {
 
           <section className="card advice" aria-labelledby="advice-title">
             <h3 id="advice-title" className="card-title">Budget advice</h3>
-            <p className="fine">Sends whole-number category percentages only. No transactions, merchants, dates or amounts.</p>
+            <p className="fine">The text sent is whole-number category percentages. It has no transactions, merchants, dates or amounts.</p>
             <p className="fine advice-note">{ADVICE_DISCLAIMER}</p>
             <button className="btn btn-cloud" disabled={!ready || !cloudOk || askBusy} onClick={prepareAdvice}>Review what would be sent</button>
             {!ready && <p className="fine">Classify a statement first.</p>}
@@ -771,7 +771,7 @@ function NoModel({ avail }: { avail: Availability }) {
       <h2 id="nomodel-title" className="card-title"><IconAlert size={18} /> {downloadable ? 'The on-device model is not downloaded yet' : 'No on-device model in this browser'}</h2>
       <dl className="nomodel-grid">
         <div><dt>Detected</dt><dd>{avail === 'unsupported' ? 'Prompt API not found.' : avail === 'unavailable' ? 'Prompt API present, model unavailable on this machine.' : avail === 'downloading' ? 'Model is downloading.' : 'Model can be downloaded (about 4 GB, first run only).'}</dd></div>
-        <div><dt>Will use instead</dt><dd>{downloadable ? 'Press Classify to start the download; rows are classified when it finishes.' : 'Local keyword rules. Your statement is still not uploaded.'}</dd></div>
+        <div><dt>Will use instead</dt><dd>{downloadable ? 'Press Classify to start the download; rows are classified when it finishes.' : 'Local keyword rules, run in this page. This step makes no network request.'}</dd></div>
         <div><dt>To enable</dt><dd>Desktop Chrome with the built-in model. Check its status at <code>chrome://on-device-internals</code>.</dd></div>
       </dl>
     </section>

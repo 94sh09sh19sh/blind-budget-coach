@@ -1,6 +1,6 @@
 # Blind Budget Coach
 
-Blind Budget Coach is a budgeting coach that reads your bank statement CSV in your browser. Each transaction is categorized on your device by Chrome's built-in Gemini Nano. When a question or advice needs a larger model, the app asks Gemini in the cloud with only the text you approve: column names, your question, or category percentages. Before anything is sent, a dialog lists the exact text and its size, and you can compare it with the request in your browser's DevTools Network panel.
+Blind Budget Coach is a budgeting coach that reads your bank statement CSV in your browser. Each transaction is categorized on your device by Chrome's built-in Gemini Nano. When a question or advice needs a larger model, the app asks Gemini in the cloud, and the text it sends is the text you approve: column names, your question, or category percentages. Before each cloud request, a dialog lists that exact text and its size, and you can compare it with the request in your browser's DevTools Network panel. The dialog also names the traffic that is not part of that text (App Check and reCAPTCHA in a production build).
 
 Built for the Firebase #BuildHybridAI hackathon. All model inference goes through Firebase AI Logic (`firebase/ai`) with hybrid inference. The only direct Chrome API call is `LanguageModel.availability()`, which checks whether the on-device model is present.
 
@@ -8,7 +8,7 @@ Live demo: (added after deployment)
 
 ## Who it is for
 
-People who want quick answers from a bank statement ("How much did I spend on Groceries?") without uploading the statement itself to a budgeting service. The "blind" in the name refers to the cloud model: it writes a query plan for your question without seeing your transactions, and your browser runs that plan on your data.
+People who want quick answers from a bank statement ("How much did I spend on Groceries?") while the statement rows stay in the browser: the text of a cloud request is what the dialog lists, and you can check that in DevTools. The "blind" in the name refers to the cloud model: it writes a query plan for your question without seeing your transactions, and your browser runs that plan on your data.
 
 ## How it uses Firebase AI Logic hybrid inference
 
@@ -52,7 +52,7 @@ The cloud is treated as not configured until all six Firebase settings are fille
 
 1. Open DevTools, go to the Network panel, tick "Preserve log", and clear it.
 2. Load a sample (or choose your CSV) and click "Classify on this device". During classification the panel should list only requests to the page's own origin (page files and the sample CSV). The on-device model download is done by Chrome itself and does not appear in the page's Network panel.
-3. In the Ask box, send a question. When the cloud is configured, the outbound gate opens first and nothing has been sent yet. Choose "Don't send" to see that no request follows and that a fixed pattern answers instead.
+3. In the Ask box, send a question. When the cloud is configured, the outbound gate opens first, and no request has been made yet. Choose "Don't send" to see that no request follows and that a fixed pattern answers instead.
 4. Ask again and choose Send. The Network panel then shows `generateContent` requests to `firebasevertexai.googleapis.com`. Open the request payload and compare it with the text in the dialog. Expect the payload to be larger than the byte count in the dialog: the count covers only the listed text, and the request also has JSON framing, escaping and headers.
    - In a production build with App Check on reCAPTCHA Enterprise, the first send also shows requests that are not part of the listed text: a script from `www.google.com/recaptcha/enterprise.js`, a script from `www.gstatic.com/recaptcha/releases/...`, a frame from `www.google.com/recaptcha/enterprise/anchor`, requests to `www.google.com/recaptcha/enterprise/` (for example `clr`), and a token exchange at `content-firebaseappcheck.googleapis.com` (`exchangeRecaptchaEnterpriseToken`). The dialog says this in its "Also happens when you send" note.
    - reCAPTCHA reads signals from your browser and device. What it reads and sends is decided by Google's script, so the dialog cannot list it word for word. The app does not give App Check or reCAPTCHA your statement, your transactions or question text beyond what the dialog lists.

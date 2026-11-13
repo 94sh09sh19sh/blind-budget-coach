@@ -16,7 +16,7 @@ import {
 } from './lib/cloudtasks'
 import { applyOverrides, setOverride, type Overrides } from './lib/overrides'
 import {
-  eraseAll, loadLastRun, loadLedger, loadOverrides, loadTimeline, saveLastRun, saveLedger, saveOverrides, saveTimeline, type LedgerEntry,
+  eraseAll, loadLastRun, loadLedger, loadOverrides, loadTimeline, saveLastRun, saveLedger, saveOverrides, saveTimeline, type LedgerEntry, type RunCounts,
 } from './lib/store'
 import { ManifestDialog } from './ui/ManifestDialog'
 import { IconAlert, IconCheck, IconCloud, IconDevice, IconGate, IconRules, IconUpload, Logo } from './ui/icons'
@@ -32,7 +32,7 @@ const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
 
 const MODES: { mode: Mode; side: Side; use: string; why: string }[] = [
-  { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Statements and samples', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere.' },
+  { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Statements and samples', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere. Obvious payroll-deposit wording is decided by a local rule instead.' },
   { mode: 'PREFER_IN_CLOUD', side: 'cloud', use: 'Questions', why: 'The cloud writes a query plan from your question and column names, after you approve. Declined or offline: a fixed pattern is picked here.' },
   { mode: 'ONLY_IN_CLOUD', side: 'cloud', use: 'Budget advice', why: 'Sends whole-number category percentages only, after you approve.' },
   { mode: 'LOCAL_RULES', side: 'rules', use: 'No model available', why: 'Keyword rules in this page. Nothing is uploaded.' },
@@ -66,6 +66,8 @@ export default function App() {
   const [askBusy, setAskBusy] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [lastClassifyMs, setLastClassifyMs] = useState<number | null>(null)
+  /** 最近一次分類各由誰判了幾列；null 表示不適用（本機規則整批分類）或舊紀錄沒有 */
+  const [runCounts, setRunCounts] = useState<RunCounts | null>(null)
   const tlId = useRef(0)
   const session = useRef(new AskSession())
   const chooser = useRef<DeviceModel | null>(null)
@@ -86,7 +88,7 @@ export default function App() {
       if (lg.length) { setLedger(lg); tlId.current = Math.max(tlId.current, ...lg.map((e) => e.id)) }
       if (last) {
         setRestored(last.txs); setFileName(last.fileName); setIsRestored(true); setLevel(last.level)
-        setCats(new Map(last.cats))
+        setCats(new Map(last.cats)); setRunCounts(last.counts ?? null)
         if (last.cats.some(([, c]) => c)) setEngine(tl.some((e) => e.mode === 'LOCAL_RULES' && e.task.startsWith('classify')) && !tl.some((e) => e.side === 'device') ? 'rules' : 'device')
       }
     })()
@@ -145,11 +147,13 @@ export default function App() {
   }, [workingId])
 
   function startPhase(p: Omit<Phase, 'start'>) { setNow(Date.now()); setPhase({ ...p, start: Date.now() }) }
+  /** 進行中的工作換說明，開始時間不變（經過秒數不歸零） */
+  function updatePhase(p: Partial<Omit<Phase, 'start'>>) { setPhase((cur) => cur && { ...cur, ...p }) }
 
   function load(text: string, name: string, lvl: DataLevel) {
     const p = parseCsv(text)
     setCsv(p); setRestored([]); setCols(guessColumns(p.headers)); setSignSel('auto'); setLevel(lvl); setFileName(name); setIsRestored(false)
-    setCats(new Map()); setEngine(null); setNote(''); setAnswer(null); setAdvice(null); setPending(null); setProg(null); setLastClassifyMs(null)
+    setCats(new Map()); setEngine(null); setNote(''); setAnswer(null); setAdvice(null); setPending(null); setProg(null); setLastClassifyMs(null); setRunCounts(null)
   }
   async function loadSample(file: string) {
     const r = await fetch(`${import.meta.env.BASE_URL}samples/${file}`)
@@ -169,9 +173,9 @@ export default function App() {
     }
   }
 
-  function persist(c: Map<number, Category | null>) {
+  function persist(c: Map<number, Category | null>, counts: RunCounts | null = runCounts) {
     if (!txs.length) return
-    saveLastRun({ fileName, cols, sign: signSel, level: level === 'user-detail' ? 'user-detail' : 'public-sample', txs, cats: [...c], savedAt: Date.now() })
+    saveLastRun({ fileName, cols, sign: signSel, level: level === 'user-detail' ? 'user-detail' : 'public-sample', txs, cats: [...c], counts, savedAt: Date.now() })
   }
 
   function runRules(reason: string, ov: Overrides) {
@@ -183,13 +187,13 @@ export default function App() {
       if (!memo.has(k)) memo.set(k, ov[k] ?? classifyByRules(t.desc))
       next.set(t.id, memo.get(k) ?? null)
     }
-    setCats(next); setEngine('rules'); persist(next)
+    setCats(next); setEngine('rules'); setRunCounts(null); persist(next, null)
     log({ task: `classify ${txs.length} rows (keyword rules)`, mode: 'LOCAL_RULES', side: 'rules', ms: performance.now() - t0, bytesSent: 0, reason })
   }
 
   // 必須由 click 觸發：裝置端模型的建立需要使用者手勢
   async function classify() {
-    setBusy(true); setNote(''); setCats(new Map()); setProg(null); setLastClassifyMs(null)
+    setBusy(true); setNote(''); setCats(new Map()); setProg(null); setLastClassifyMs(null); setRunCounts(null)
     const t0 = Date.now()
     try {
       const a = await checkAvailability(); setAvail(a)
@@ -208,6 +212,8 @@ export default function App() {
         const idsByDesc = new Map<string, number[]>()
         for (const t of txs) idsByDesc.set(t.desc, [...(idsByDesc.get(t.desc) ?? []), t.id])
         const ovMap = new Map(Object.entries(overrides) as [string, Category][])
+        // 這次分類各由誰判了幾列（只算有結果的列）：模型、確定性規則、使用者先前存的更正
+        const counts: RunCounts = { model: 0, rule: 0, corrected: 0 }
         await classifyAll(model.generate, txs.map((t) => t.desc), (e) => {
           setCats((prev) => {
             const n = new Map(prev)
@@ -215,6 +221,12 @@ export default function App() {
             return n
           })
           setProg((p) => p && { ...p, done: p.done + 1, keys: [...p.keys, e.key], last: { key: e.key, category: e.category } })
+          if (e.category) counts[e.rule ? 'rule' : e.cached ? 'corrected' : 'model'] += e.descs.length
+          if (e.rule) {
+            // 規則判的：時間線標 Rules，不算成模型判的
+            log({ task: `classify "${e.key}" (payroll-deposit rule)`, mode: 'LOCAL_RULES', side: 'rules', ms: 0, bytesSent: 0, reason: 'Payroll-deposit wording matched a local rule, so the model was not asked.' })
+            return
+          }
           const side = (bm && e.batch && !e.batch.fellBack ? bm.lastSource() : model.lastSource()) === 'cloud' ? 'cloud' : 'device'
           if (e.cached) return
           if (e.batch && !e.batch.fellBack) {
@@ -222,7 +234,8 @@ export default function App() {
             if (e.batch.first) log({ task: `classify batch of ${e.batch.size} merchants`, mode: 'ONLY_ON_DEVICE', side, ms: e.batch.ms, bytesSent: 0, reason: d.reason })
           } else log({ task: `classify "${e.key}"${e.batch ? ' (batch fell back to one by one)' : ''}`, mode: 'ONLY_ON_DEVICE', side, ms: e.ms, bytesSent: 0, reason: d.reason })
         }, ovMap, { batchSize: batchN, genBatch: bm?.generate })
-        setCats((prev) => { persist(prev); return prev })
+        setRunCounts(counts)
+        setCats((prev) => { persist(prev, counts); return prev })
       } else {
         // 分類走本機規則；雲端不碰使用者明細
         const why = d.side === 'cloud' ? 'No on-device model; using local rules. Nothing is uploaded.' : d.reason
@@ -253,14 +266,22 @@ export default function App() {
   }
 
   // ---- 盲眼分析 ----
-  async function deps(): Promise<AskDeps> {
+  function deps(): AskDeps {
     const d: AskDeps = { log, cloud: cloudOk ? firebaseCloudCall : undefined }
     if (modelOk) {
-      try {
-        if (!chooser.current) chooser.current = await createDeviceModel({ system: PATTERN_SYSTEM, schema: PATTERN_SCHEMA })
-        const m = chooser.current
-        d.deviceChoose = (q) => m.generate(`Question: ${q}\nAnswer:`)
-      } catch { chooser.current = null }
+      // 固定樣式用的裝置端模型等到真的要選樣式才建立：走雲端時不必先等它。建立或呼叫失敗就丟錯，由 askFixed 退回關鍵字比對。
+      // 模型重新啟動後（例如 Chrome 重開、閒置後）第一次呼叫要十幾到三十幾秒：超過 3 秒還沒回來，就把原因寫在等待畫面上。
+      d.deviceChoose = async (q) => {
+        const slow = setTimeout(() => updatePhase({
+          label: 'Loading the on-device model',
+          detail: 'The on-device model has not answered yet. It may be loading again, which can take about 15–35 s. Later questions usually take 1–2 s.',
+          where: 'device',
+        }), 3000)
+        try {
+          const m = chooser.current ?? (chooser.current = await createDeviceModel({ system: PATTERN_SYSTEM, schema: PATTERN_SCHEMA }))
+          return await m.generate(`Question: ${q}\nAnswer:`)
+        } finally { clearTimeout(slow) }
+      }
     }
     return d
   }
@@ -276,7 +297,7 @@ export default function App() {
         setPending({ kind: 'plan', question: q, manifest: buildPlanManifest(q, columns, today(), txs.length) })
       } else {
         startPhase({ label: 'Picking a fixed query pattern on this device', where: 'device' })
-        show(q, await askFixed(session.current, await deps(), q, cloudWhy || 'Using a fixed pattern.'))
+        show(q, await askFixed(session.current, deps(), q, cloudWhy || 'Using a fixed pattern.'))
       }
     } finally { setAskBusy(false); setPhase(null) }
   }
@@ -290,11 +311,11 @@ export default function App() {
         startPhase(sendIt
           ? { label: 'Waiting for the cloud to write a query plan', detail: 'Usually 2–12 s; gives up after 45 s. Your data is not part of the request.', where: 'cloud' }
           : { label: 'Picking a fixed query pattern on this device', where: 'device' })
-        const d = await deps()
+        const d = deps()
         show(p.question, sendIt ? await askCloud(session.current, d, p.question, p.manifest) : await askFixed(session.current, d, p.question, 'You chose not to send anything; using a fixed pattern.'))
       } else if (sendIt) {
         startPhase({ label: 'Waiting for budget advice from the cloud', detail: 'Usually 2–12 s; gives up after 45 s.', where: 'cloud' })
-        const r = await askAdvice(session.current, await deps(), p.manifest)
+        const r = await askAdvice(session.current, deps(), p.manifest)
         setAdvice(r.ok ? { advice: r.advice } : { error: r.error })
       }
     } finally { setAskBusy(false); setPhase(null); outbound.current = null }
@@ -468,7 +489,7 @@ export default function App() {
                   {engine === 'device' ? <IconCheck size={16} /> : <IconRules size={16} />}
                   <span>
                     {engine === 'device'
-                      ? `${plural(doneCount, 'row')} classified by the on-device model${lastClassifyMs ? ` in ${Math.round(lastClassifyMs / 1000)} s` : ''}. Unknown merchants may be wrong; pick a category to correct it.`
+                      ? `${runSummary(runCounts, doneCount)}${lastClassifyMs ? ` in ${Math.round(lastClassifyMs / 1000)} s` : ''}. Unknown merchants may be wrong; pick a category to correct it.`
                       : `Local keyword rules were used (no model). ${note}`}
                   </span>
                 </p>
@@ -696,6 +717,15 @@ export default function App() {
       )}
     </div>
   )
+}
+
+/** 最近一次分類各由誰判的說明；舊紀錄沒有分項時只說在這個裝置上 */
+function runSummary(c: RunCounts | null, total: number): string {
+  if (!c) return `${plural(total, 'row')} categorized on this device`
+  const parts = [`${plural(c.model, 'row')} classified by the on-device model`]
+  if (c.rule) parts.push(`${plural(c.rule, 'row')} by a local payroll-deposit rule`)
+  if (c.corrected) parts.push(`${plural(c.corrected, 'row')} from your saved corrections`)
+  return parts.join(', ')
 }
 
 function SideTag({ side }: { side: Side }) {

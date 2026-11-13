@@ -2,6 +2,7 @@
 // 清理後店家字串去重快取、enum 結構化輸出、只留類別定義的系統提示。
 import { CATEGORIES, SYSTEM_PROMPT, isCategory, type Category } from './categories'
 import { normalizeDesc } from './normalize'
+import { isPayrollDeposit } from './rules'
 import { createDeviceModel, type DeviceModel, type Gen } from './ai'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -62,6 +63,8 @@ export interface ClassifyEvent {
   cached: boolean
   /** 這個店家字串影響的原始說明（呼叫端據此逐筆亮出） */
   descs: string[]
+  /** 為 true 表示這筆是確定性規則判的（薪資入帳字樣），沒有問模型；呼叫端必須標成 Rules，不能算成模型判的 */
+  rule?: boolean
   /** 只有批次路徑才有：這筆是哪一批的一份子（first 只在該批第一筆為 true，時間線每批只記一列） */
   batch?: { size: number; ms: number; first: boolean; fellBack: boolean }
 }
@@ -119,6 +122,7 @@ export interface ClassifyOptions {
 
 /**
  * 分類：依清理後字串去重，同字串只問模型一次（結果快取；overrides 為使用者更正，優先於模型，不送模型）。
+ * 明顯的薪資入帳字樣由確定性規則直接判 Income（事件的 rule 為 true），不問模型。
  * batchSize 為 1 時逐筆；大於 1 時每批一次呼叫，數量不符、解析失敗或逾時就整批退回逐筆。
  * 每完成一個不重複字串就呼叫 onEvent（一批回來時，該批的事件連續發出，讓介面一起亮）。
  */
@@ -141,6 +145,10 @@ export async function classifyAll(
     if (o) {
       cache.set(key, o)
       onEvent({ key, category: o, ms: 0, cached: true, descs: group })
+    } else if (isPayrollDeposit(key)) {
+      // 使用者更正優先，其次是薪資入帳規則；都沒命中才問模型
+      cache.set(key, 'Income')
+      onEvent({ key, category: 'Income', ms: 0, cached: false, rule: true, descs: group })
     } else todo.push(key)
   }
   const size = Math.max(1, Math.floor(opts.batchSize ?? 1))

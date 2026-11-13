@@ -20,6 +20,15 @@ const RULES: [Category, RegExp][] = [
   ['Shopping', /STORE|BOUTIQUE|HARDWARE|OUTLET|SHOP|MALL|APPAREL|FURNITURE|HOME GOODS|ONLINE ORDER/],
 ]
 
+// 明顯的薪資入帳字樣：裝置端分類在問模型之前就用這條規則判為 Income，不經模型（時間線與介面都標 Rules）。
+// 範圍刻意很窄（只看字樣、不看金額正負）；利息、退稅、股利等其他收入仍交給模型。
+// 起因：示範資料的 DIRECT DEP BRIGHTWAVE LLC 曾被模型判成 Transfers。
+const PAYROLL_DEPOSIT = /\b(?:PAYROLL|DIRECT DEP(?:OSIT)?|SALARY|PAYCHECK)\b/i
+
+export function isPayrollDeposit(desc: string): boolean {
+  return PAYROLL_DEPOSIT.test(desc)
+}
+
 /** 回傳類別；沒有任何規則命中時回傳 null。 */
 export function classifyByRules(desc: string): Category | null {
   const t = normalizeDesc(desc)

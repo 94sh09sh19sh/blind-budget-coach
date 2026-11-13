@@ -19,7 +19,7 @@ The app creates its models with `getGenerativeModel` and chooses an `InferenceMo
 | `ONLY_ON_DEVICE` | Classifying every transaction; picking one of six fixed query patterns for a question | Chrome's on-device model (Gemini Nano) |
 | `PREFER_IN_CLOUD` | Blind analysis: writing a query plan from your question and the column names | Gemini in the cloud, after you approve the outbound text |
 | `ONLY_IN_CLOUD` | Budget advice from category percentages | Gemini in the cloud, after you approve the outbound text |
-| (none) | No on-device model available: local keyword rules | JavaScript in the page |
+| (none) | No on-device model available: local keyword rules. Also obvious payroll-deposit wording (for example `DIRECT DEP`, `PAYROLL`), which a local rule labels Income before the model is asked | JavaScript in the page |
 
 Classification is hard-wired to `ONLY_ON_DEVICE`, and `src/lib/ai.ts` is the only file that imports `firebase/ai`. The only cloud calls are the query-plan and budget-advice requests below, and both sit behind the approval dialog. No code path sends your transactions to the cloud.
 
@@ -27,7 +27,7 @@ Classification is hard-wired to `ONLY_ON_DEVICE`, and `src/lib/ai.ts` is the onl
 
 | Task | What the request contains | Mode | If unavailable |
 |---|---|---|---|
-| Classify your transactions | No network request is made by the page | `ONLY_ON_DEVICE` | Local keyword rules |
+| Classify your transactions (except payroll-deposit wording, which a local rule decides) | No network request is made by the page | `ONLY_ON_DEVICE` | Local keyword rules |
 | Pick a fixed query pattern (you declined to send, offline, or cloud not configured) | No network request is made by the page | `ONLY_ON_DEVICE` | Keyword matching |
 | Blind analysis | Instructions, today's date, column names and types, the category list, your question, the response structure | `PREFER_IN_CLOUD` | A fixed query pattern, chosen on device or by keywords |
 | Budget advice | Instructions, whole-number percentages per category, the response structure | `ONLY_IN_CLOUD` | Disabled; the reason is shown |
@@ -40,7 +40,7 @@ The cloud is treated as not configured until all six Firebase settings are fille
 
 - Outbound gate: before every cloud request, a dialog lists the exact text that will be sent (instructions, message, response structure) and its size in bytes, next to a list of what is not included. The default focus is "Don't send", and Esc means the same.
 - Outbound ledger: every request you approved is listed with the text that was sent. The "bytes sent" counter at the top is the sum of the ledger since the last erase.
-- Timeline: every model call and rule run, with the side it ran on (Device, Cloud or Rules), the mode, the duration and the reason.
+- Timeline: every model call and rule run, with the side it ran on (Device, Cloud or Rules), the mode, the duration and the reason. A row decided by the payroll-deposit rule is marked Rules, and the summary under the statement counts it separately from the rows the model classified.
 - A route line under the statement names the mode in use and why. The "How each task is routed" panel lists all four paths.
 - Corrections: pick another category for any row. The correction applies to every row with the same cleaned merchant string and is reused next time.
 - "Erase all local data" clears corrections, timeline, ledger and the last statement (IndexedDB).
@@ -115,11 +115,11 @@ npm run preview
 
 Tested in a real browser (Chrome 157, the dev server or the built preview):
 
-- Classifying the 60-row sample on device, with zero requests to hosts other than localhost during classification (page-level observation through the Chrome DevTools Protocol; requests made by the browser itself are not visible this way).
+- Classifying the 60-row sample on device (58 rows by the model, 2 payroll-deposit rows by the local rule, shown separately in the summary and the timeline), with zero requests to hosts other than localhost during classification (page-level observation through the Chrome DevTools Protocol; requests made by the browser itself are not visible this way).
 - Offline load and classification of the built app, and the six example questions offline.
 - Corrections, persistence after a reload, and erase.
 - The cloud path against a real Firebase project with App Check (debug token): outbound dialog, approved requests, cached repeat questions, budget advice, offline disable and recovery. 13 free-form question runs (including re-tests after a fix) matched direct computation from the CSV.
-- The six fixed patterns chosen by the on-device model, using the six example questions only.
+- The six fixed patterns chosen by the on-device model, using the six example questions only. After a Chrome restart the first one took about 35 seconds, and the loading note appeared after 3 seconds.
 - The layout with no on-device model (simulated by removing the Prompt API), the page at widths from 900 px up, and the keyboard path through the main flow.
 
 Covered by unit tests only:
@@ -137,8 +137,8 @@ Not tested:
 
 ## Known limitations
 
-- Speed. Classifying the 60-row sample (34 distinct cleaned merchant strings) took about 45 to 80 seconds in tests, at about 1.2 to 1.6 seconds per distinct string. The first call after the model starts adds about 15 to 30 seconds. The Firebase AI Logic on-device path creates a new Chrome session for each call and sends the system prompt again each time.
-- Accuracy. On two synthetic evaluation sets of 300 rows each (about 134 distinct strings each), one-by-one classification scored 95.0% and 94.3%. The sets and the script are not part of this repository. A check by eye on the 60-row sample found one wrong row out of 60. Unknown merchants can be wrong; correct them in the table.
+- Speed. Classifying the 60-row sample (34 distinct cleaned merchant strings) took about 45 to 80 seconds in tests, at about 1.2 to 1.6 seconds per distinct string. The first call after the model starts adds about 15 to 30 seconds. The Firebase AI Logic on-device path creates a new Chrome session for each call and sends the system prompt again each time. When the model has to load again (for example after Chrome restarts), the first fixed-pattern question took about 35 to 40 seconds in tests; if the model has not answered after 3 seconds, the page says that it may be loading again.
+- Accuracy. On two synthetic evaluation sets of 300 rows each (about 134 distinct strings each), one-by-one classification scored 95.0% and 94.3%. The sets and the script are not part of this repository. These figures were measured before the payroll-deposit rule was added. A check by eye on the 60-row sample earlier found one wrong row out of 60: a payroll deposit read as a transfer. A local rule now handles payroll-deposit wording. It was written after seeing that miss, so the sample is no longer an independent test. The rule looks at the wording only, not the sign of the amount, and covers `PAYROLL`, `DIRECT DEP`, `DIRECT DEPOSIT`, `SALARY` and `PAYCHECK`. Unknown merchants can be wrong; correct them in the table.
 - Fixed patterns. Without the cloud, a question maps to one of six fixed patterns: top categories, spending per month, top merchants, total in one category or at one named merchant, average purchase in one category, and count of purchases above an amount. Anything else answers "no result" and suggests an example question. With the cloud, a question that cannot be answered exactly with the plan fields (for example comparing two periods) is reported as out of scope instead of being approximated.
 - Batched classification (several merchants per call) was measured and left off. With five merchants per call it was 2.2 to 3.5 times faster on the two sets but lost 0.7 to 3.0 points of accuracy, so one merchant per call stays the default (`DEFAULT_BATCH_SIZE` in `src/lib/ondevice.ts`).
 - Cloud limits. The free tier has rate limits. The app allows 10 cloud calls per browsing session and waits at most 45 seconds for each. After a timeout the SDK call may still be running in the background, and its result is discarded. The "bytes sent" counter counts a failed request too, because it may have been sent. Byte counts are the UTF-8 length of instructions, message and response structure, and omit HTTP headers.

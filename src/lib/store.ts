@@ -4,6 +4,9 @@ import type { Category } from './categories'
 import type { ColumnMap, SignMode, Tx } from './csv'
 import type { TimelineEntry } from './router'
 
+/** 最近一次分類各由誰判了幾列：模型、確定性規則（薪資入帳字樣）、使用者先前存的更正 */
+export interface RunCounts { model: number; rule: number; corrected: number }
+
 export interface LastRun {
   fileName: string
   cols: ColumnMap
@@ -11,6 +14,8 @@ export interface LastRun {
   level: 'user-detail' | 'public-sample'
   txs: Tx[]
   cats: [number, Category | null][]
+  /** 舊版存的紀錄沒有這欄 */
+  counts?: RunCounts | null
   savedAt: number
 }
 

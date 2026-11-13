@@ -1,11 +1,17 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { buildCsp } from './src/csp.ts'
+import { cspPlugin } from './vite-plugin-csp.ts'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // vite preview 沒有 Firebase Hosting 的標頭，這裡補同一份，讓本機預覽的建置版同時受標頭版與 meta 版政策約束（與上線一致）
+  preview: { headers: { 'Content-Security-Policy': buildCsp('header') } },
   plugins: [
     react(),
+    // 正式建置時注入 CSP meta（開發伺服器不注入）；政策內容在 src/csp.ts
+    cspPlugin(),
     // 建置後的頁面（含示範 CSV）全部預先快取，斷網也能載入並分類
     VitePWA({
       registerType: 'autoUpdate',

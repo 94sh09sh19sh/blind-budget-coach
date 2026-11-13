@@ -38,8 +38,9 @@ The cloud is treated as not configured until all six Firebase settings are fille
 
 ## What the page shows you
 
-- Outbound gate: before every cloud request, a dialog lists the exact text that will be sent (instructions, message, response structure) and its size in bytes, next to a list of what is not included. The default focus is "Don't send", and Esc means the same.
-- Outbound ledger: every request you approved is listed with the text that was sent. The "bytes sent" counter at the top is the sum of the ledger since the last erase.
+- Outbound gate: before every cloud request, a dialog lists the exact text that will be sent (instructions, message, response structure) and its size in bytes, next to a list of what is not included. The default focus is "Don't send", and Esc means the same. The byte count covers only the text listed in the dialog; the request itself is larger (headers, JSON wrapping). The dialog also carries a fixed note about traffic that is not part of the listed text: in a production build with a reCAPTCHA site key, the first send loads Google reCAPTCHA through Firebase App Check (see "App Check and reCAPTCHA" below). A development build with a debug token shows a shorter note instead (only an App Check token request, no reCAPTCHA).
+- Outbound ledger: every request you approved is listed with the text that was sent. The "bytes sent" counter at the top is the sum of the ledger since the last erase. Like the dialog, it counts only the listed text, not HTTP headers, JSON wrapping or App Check and reCAPTCHA traffic.
+- Network allow-list: the cloud column states which hosts the browser lets this page connect to, read from the same source as the policy itself (see "Network allow-list (Content-Security-Policy)" below). In a development build, where no policy is applied, it says so.
 - Timeline: every model call and rule run, with the side it ran on (Device, Cloud or Rules), the mode, the duration and the reason. A row decided by the payroll-deposit rule is marked Rules, and the summary under the statement counts it separately from the rows the model classified.
 - A route line under the statement names the mode in use and why. The "How each task is routed" panel lists all four paths.
 - Corrections: pick another category for any row. The correction applies to every row with the same cleaned merchant string and is reused next time.
@@ -50,8 +51,37 @@ The cloud is treated as not configured until all six Firebase settings are fille
 1. Open DevTools, go to the Network panel, tick "Preserve log", and clear it.
 2. Load a sample (or choose your CSV) and click "Classify on this device". During classification the panel should list only requests to the page's own origin (page files and the sample CSV). The on-device model download is done by Chrome itself and does not appear in the page's Network panel.
 3. In the Ask box, send a question. When the cloud is configured, the outbound gate opens first and nothing has been sent yet. Choose "Don't send" to see that no request follows and that a fixed pattern answers instead.
-4. Ask again and choose Send. The Network panel then shows `generateContent` requests to `firebasevertexai.googleapis.com` (plus a token request to `content-firebaseappcheck.googleapis.com` when App Check is on). Open the request payload and compare it with the text in the dialog. Expect the payload to be slightly larger than the byte count in the dialog, because of JSON framing and escaping.
+4. Ask again and choose Send. The Network panel then shows `generateContent` requests to `firebasevertexai.googleapis.com`. Open the request payload and compare it with the text in the dialog. Expect the payload to be larger than the byte count in the dialog: the count covers only the listed text, and the request also has JSON framing, escaping and headers.
+   - In a production build with App Check on reCAPTCHA Enterprise, the first send also shows requests that are not part of the listed text: a script from `www.google.com/recaptcha/enterprise.js`, a script from `www.gstatic.com/recaptcha/releases/...`, a frame from `www.google.com/recaptcha/enterprise/anchor`, requests to `www.google.com/recaptcha/enterprise/` (for example `clr`), and a token exchange at `content-firebaseappcheck.googleapis.com` (`exchangeRecaptchaEnterpriseToken`). The dialog says this in its "Also happens when you send" note.
+   - reCAPTCHA reads signals from your browser and device. What it reads and sends is decided by Google's script, so the dialog cannot list it word for word. The app does not give App Check or reCAPTCHA your statement, your transactions or question text beyond what the dialog lists.
+   - In `npm run dev` with a debug token, only the App Check token request to `content-firebaseappcheck.googleapis.com` appears, and reCAPTCHA is not loaded.
 5. To check the offline path, set the Network panel to "Offline", reload the built app (`npm run preview`) and classify again.
+
+## Network allow-list (Content-Security-Policy)
+
+Production builds carry a Content-Security-Policy that lists where this page may load code from and which hosts its code may connect to. The browser enforces it: a request to a host that is not on the list is blocked and reported in the console.
+
+- Where it lives: `src/csp.ts` defines the policy once. `vite build` injects it into `index.html` as a `<meta http-equiv="Content-Security-Policy">` (see `vite-plugin-csp.ts`), right after `<meta charset>` and before anything that loads a resource. `firebase.json` sends the same policy as a response header for every path, plus `frame-ancestors 'none'` (a meta tag cannot carry that directive). A unit test checks that `firebase.json` matches `src/csp.ts`. The dev server applies no policy (so hot reload keeps working), and the cloud column says that instead of claiming one. `npm run preview` adds the header to the built app, so a local preview runs under both the meta tag and the header, like the deployed site.
+- Hosts allowed besides this site:
+
+| Host | Used for | Allowed in |
+|---|---|---|
+| `https://firebasevertexai.googleapis.com` | Gemini through Firebase AI Logic | `connect-src` |
+| `https://content-firebaseappcheck.googleapis.com` | App Check token exchange | `connect-src` |
+| `https://www.google.com/recaptcha/` | reCAPTCHA Enterprise script, frames and requests | `script-src`, `frame-src`, `connect-src` |
+| `https://www.gstatic.com/recaptcha/` | reCAPTCHA script files | `script-src` |
+| `https://recaptcha.google.com/recaptcha/` | reCAPTCHA frames | `frame-src` |
+
+- The policy in full (response header version; the meta version is the same without `frame-ancestors`):
+
+```
+default-src 'self'; script-src 'self' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; connect-src 'self' https://firebasevertexai.googleapis.com https://content-firebaseappcheck.googleapis.com https://www.google.com/recaptcha/; frame-src https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; style-src 'self'; img-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+```
+
+- No wildcard hosts, no `unsafe-eval`, no `unsafe-inline` for scripts or styles. The reCAPTCHA entries follow Google's reCAPTCHA documentation on CSP. Each host is either called by SDK code in the bundle (`firebasevertexai.googleapis.com`, `content-firebaseappcheck.googleapis.com`, `www.google.com/recaptcha/enterprise.js`) or named in Google's reCAPTCHA documentation on CSP. A search of the built JavaScript found no other host that the page requests.
+- How to check it yourself: view the page source of the deployed site and find the `Content-Security-Policy` meta tag, or open DevTools, Network, select the document request and read the `Content-Security-Policy` response header. To see the browser enforce it, type `fetch('https://any-other-host.test/')` in the console; it is refused with a message naming `connect-src`.
+- What it does and does not cover: it governs this page's code (scripts, fetch and XHR, frames, images, styles, workers). It does not govern what the browser does by itself, such as Chrome downloading the on-device model or checking for component updates. Inside the allowed hosts it says nothing about what is sent: for example, what Google's reCAPTCHA script sends to `www.google.com/recaptcha/` is decided by that script (see "App Check and reCAPTCHA").
+- Tested locally on `npm run preview` (Chrome 157): page load, classification of the 60-row sample on device, the six example questions, offline reload through the service worker, and the PWA manifest and icons all ran with no policy violation in the console. Pressing Send on localhost loads the reCAPTCHA scripts and frame with no violation either (the site key only accepts the real domain, so the token request fails there, as expected). Not tested locally: the full App Check and Gemini path on the real domain. If the console of the deployed site shows a violation from reCAPTCHA, the first suspects are `style-src` (reCAPTCHA styling its badge) and `img-src`, which would need a narrow addition.
 
 ## Requirements
 
@@ -81,10 +111,11 @@ Open `http://localhost:5173`. With no Firebase settings, the app runs on device 
 
 The `VITE_FIREBASE_*` values identify a project and are not secrets. Restrict the API key and turn on App Check for your project. The debug token described below is a secret.
 
-### App Check
+### App Check and reCAPTCHA
 
 The cloud inference app is created on the first cloud call, after you approve a request. App Check is set up at that moment, and not for on-device classification.
 
+- What this adds to the first send: when `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` is set, the page loads Google reCAPTCHA Enterprise (`www.google.com/recaptcha/`, `www.gstatic.com/recaptcha/`) and exchanges its result for an App Check token at `content-firebaseappcheck.googleapis.com`. reCAPTCHA reads signals from the browser and device to decide whether the visitor is a real person. This traffic is not part of the text the dialog lists, and the dialog says so. This reCAPTCHA path is not exercised by on-device classification, only by an approved cloud request.
 - Production builds: set `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` (a reCAPTCHA Enterprise site key, a public value) in `.env.production.local`.
 - Local development: create a debug token in the Firebase console (App Check, Apps, Manage debug tokens) and set `VITE_APPCHECK_DEBUG_TOKEN` in `.env.development.local`. This token is a secret. The code reads it in dev mode only.
 - If neither is set, App Check stays off. A project that enforces App Check will then refuse the request, and the app shows a short error instead of the raw message.
@@ -108,6 +139,8 @@ npm run preview
 - `src/lib/plan.ts`: query-plan structure, strict validator, whitelisted executor, six fixed patterns.
 - `src/lib/cloudtasks.ts`: outbound text, blind analysis, budget advice, caching, call limits.
 - `src/firebase.ts`: settings from `VITE_` variables, App Check.
+- `src/csp.ts`: the Content-Security-Policy and its host allow-list, defined once. `vite-plugin-csp.ts` injects it into `index.html` at build time; `firebase.json` carries the same policy as a response header.
+- `src/lib/disclosure.ts`: the fixed notes about App Check, reCAPTCHA, byte counts and the policy.
 - `src/ui/`: outbound gate dialog and icons. All icons are drawn in this repository.
 - `public/samples/`: two synthetic statements (60 and 247 rows) with fictional merchants.
 
@@ -141,7 +174,7 @@ Not tested:
 - Accuracy. On two synthetic evaluation sets of 300 rows each (about 134 distinct strings each), one-by-one classification scored 95.0% and 94.3%. The sets and the script are not part of this repository. These figures were measured before the payroll-deposit rule was added. A check by eye on the 60-row sample earlier found one wrong row out of 60: a payroll deposit read as a transfer. A local rule now handles payroll-deposit wording. It was written after seeing that miss, so the sample is no longer an independent test. The rule looks at the wording only, not the sign of the amount, and covers `PAYROLL`, `DIRECT DEP`, `DIRECT DEPOSIT`, `SALARY` and `PAYCHECK`. Unknown merchants can be wrong; correct them in the table.
 - Fixed patterns. Without the cloud, a question maps to one of six fixed patterns: top categories, spending per month, top merchants, total in one category or at one named merchant, average purchase in one category, and count of purchases above an amount. Anything else answers "no result" and suggests an example question. With the cloud, a question that cannot be answered exactly with the plan fields (for example comparing two periods) is reported as out of scope instead of being approximated.
 - Batched classification (several merchants per call) was measured and left off. With five merchants per call it was 2.2 to 3.5 times faster on the two sets but lost 0.7 to 3.0 points of accuracy, so one merchant per call stays the default (`DEFAULT_BATCH_SIZE` in `src/lib/ondevice.ts`).
-- Cloud limits. The free tier has rate limits. The app allows 10 cloud calls per browsing session and waits at most 45 seconds for each. After a timeout the SDK call may still be running in the background, and its result is discarded. The "bytes sent" counter counts a failed request too, because it may have been sent. Byte counts are the UTF-8 length of instructions, message and response structure, and omit HTTP headers.
+- Cloud limits. The free tier has rate limits. The app allows 10 cloud calls per browsing session and waits at most 45 seconds for each. After a timeout the SDK call may still be running in the background, and its result is discarded. The "bytes sent" counter counts a failed request too, because it may have been sent. Byte counts are the UTF-8 length of the text listed in the dialog (instructions, message and response structure). They omit HTTP headers, JSON wrapping and App Check and reCAPTCHA traffic, so the requests in the Network panel are larger.
 - Local storage. The last statement, corrections, timeline and ledger are kept unencrypted in IndexedDB until you erase them.
 - Your own CSV files. Column guessing and the sign guess were checked on synthetic files only.
 - Language. English descriptions only.

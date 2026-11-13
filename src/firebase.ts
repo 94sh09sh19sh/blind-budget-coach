@@ -3,6 +3,7 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAI, GoogleAIBackend, type AI } from 'firebase/ai'
 import { CustomProvider, ReCaptchaEnterpriseProvider, initializeAppCheck } from 'firebase/app-check'
+import { appCheckMode, type AppCheckMode } from './lib/disclosure'
 
 export const PLACEHOLDER = 'REPLACE_ME'
 
@@ -54,18 +55,26 @@ export function getCloudAi(): AI {
   return cloudAi
 }
 
+/** 讀環境變數決定的 App Check 方式；出境清單的揭露文字依它顯示。除錯權杖只在開發模式讀，正式建置一律不會是 'debug'。 */
+export const APP_CHECK_MODE: AppCheckMode = appCheckMode({
+  dev: !!env.DEV,
+  debugToken: env.VITE_APPCHECK_DEBUG_TOKEN,
+  siteKey: env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY,
+})
+
 function setupAppCheck(app: FirebaseApp): void {
   // debug token 只在開發模式讀，而且只放在不進 repo 的 .env.development.local；正式建置不會帶到。
   const debugToken: string | undefined = env.DEV ? env.VITE_APPCHECK_DEBUG_TOKEN : undefined
   const siteKey: string | undefined = env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY
-  if (debugToken) {
+  if (APP_CHECK_MODE === 'debug' && debugToken) {
     ;(self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: string }).FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken
     // 除錯模式下 SDK 直接拿 debug token 換權杖，不會呼叫這個提供者；放它只是因為 initializeAppCheck 需要一個。
     initializeAppCheck(app, {
       provider: new CustomProvider({ getToken: () => Promise.reject(new Error('App Check debug mode only')) }),
     })
-  } else if (siteKey) {
+  } else if (APP_CHECK_MODE === 'recaptcha' && siteKey) {
+    // 這一步會載入 Google reCAPTCHA Enterprise 的指令碼；出境清單對話框與 README 都有如實說明（src/lib/disclosure.ts）。
     initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(siteKey), isTokenAutoRefreshEnabled: true })
   }
-  // 兩者都沒有：不啟用 App Check；專案若已強制 App Check，雲端呼叫會被拒並顯示錯誤。
+  // 'off'：不啟用 App Check；專案若已強制 App Check，雲端呼叫會被拒並顯示錯誤。
 }

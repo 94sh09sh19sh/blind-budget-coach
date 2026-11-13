@@ -7,7 +7,8 @@ import { classifyByRules } from './lib/rules'
 import { normalizeDesc } from './lib/normalize'
 import { spendByCategory, type Classified } from './lib/aggregate'
 import { route, type DataLevel, type Mode, type Side, type TimelineEntry } from './lib/router'
-import { CLOUD_CONFIGURED } from './firebase'
+import { APP_CHECK_MODE, CLOUD_CONFIGURED } from './firebase'
+import { cspNote } from './lib/disclosure'
 import { createDeviceModel, firebaseCloudCall, type DeviceModel } from './lib/ai'
 import { EXAMPLE_QUESTIONS, PATTERN_SCHEMA, PATTERN_SYSTEM, runPlan, type PlanResult } from './lib/plan'
 import {
@@ -30,6 +31,9 @@ type ClassifyProgress = { done: number; total: number; keys: string[]; batch: nu
 const today = () => new Date().toISOString().slice(0, 10)
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
+
+/** 這個頁面的 HTML 裡真的有 CSP 的 meta 才算套用（正式建置才有）；用實際讀到的，不用建置模式推測。標頭版在回應標頭，頁面讀不到，所以不納入判斷。 */
+const cspApplied = typeof document !== 'undefined' && document.querySelector('meta[http-equiv="Content-Security-Policy" i]') !== null
 
 const MODES: { mode: Mode; side: Side; use: string; why: string }[] = [
   { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Statements and samples', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere. Obvious payroll-deposit wording is decided by a local rule instead.' },
@@ -703,6 +707,7 @@ export default function App() {
                 </li>
               ))}
             </ul>
+            <p className="fine csp-note">{cspNote(cspApplied)}</p>
           </section>
         </aside>
       </div>
@@ -713,6 +718,7 @@ export default function App() {
           onSend={() => confirmPending(true)}
           onCancel={() => confirmPending(false)}
           cancelText={pending.kind === 'plan' ? "Don't send · use a fixed pattern" : "Don't send"}
+          appCheck={APP_CHECK_MODE}
         />
       )}
     </div>

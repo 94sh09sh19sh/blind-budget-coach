@@ -1,6 +1,7 @@
 // 出境清單對話框：送出前把原文列給使用者看。用原生 <dialog> 的 showModal，焦點會被限制在框內，Esc 等同「不送」。
 import { useEffect, useRef } from 'react'
 import type { Manifest } from '../lib/cloudtasks'
+import { appCheckDisclosure, byteCountNote, type AppCheckMode } from '../lib/disclosure'
 import { IconCloud, IconDevice, IconGate } from './icons'
 
 // 記住對話框以外最後一個有焦點的元素：按鈕一按下去就會暫時停用而失去焦點，開啟時再讀 activeElement 會是 body
@@ -12,7 +13,7 @@ if (typeof document !== 'undefined') {
   })
 }
 
-export function ManifestDialog({ m, onSend, onCancel, cancelText }: { m: Manifest; onSend: () => void; onCancel: () => void; cancelText: string }) {
+export function ManifestDialog({ m, onSend, onCancel, cancelText, appCheck }: { m: Manifest; onSend: () => void; onCancel: () => void; cancelText: string; appCheck: AppCheckMode }) {
   const ref = useRef<HTMLDialogElement>(null)
   const noRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -32,6 +33,7 @@ export function ManifestDialog({ m, onSend, onCancel, cancelText }: { m: Manifes
       setTimeout(back, 0)
     }
   }, [])
+  const extra = appCheckDisclosure(appCheck)
   const kept = m.notIncluded.replace(/^Not included:\s*/i, '').split(/,\s*/)
   return (
     <dialog
@@ -45,7 +47,7 @@ export function ManifestDialog({ m, onSend, onCancel, cancelText }: { m: Manifes
         <span className="gd-kicker"><IconGate size={16} /> Outbound gate · {m.mode}</span>
         <h2 id="gate-title">This exact text will leave your device</h2>
         <p id="gate-desc" className="gd-sub">
-          <strong className="mono">{m.bytes.toLocaleString('en-US')} bytes</strong> of instructions, message and response structure. Headers and wrapping add a little on the wire; you can verify this in DevTools → Network.
+          <strong className="mono">{m.bytes.toLocaleString('en-US')} bytes</strong>{byteCountNote(appCheck)}
         </p>
       </header>
 
@@ -69,11 +71,17 @@ export function ManifestDialog({ m, onSend, onCancel, cancelText }: { m: Manifes
           </ul>
           <p className="gd-keep-note">The answer comes back as a query plan or short text, and runs against your data here.</p>
         </section>
+        {extra && (
+          <section className="gd-extra" aria-label="Other network traffic when you send">
+            <h3>{extra.heading}</h3>
+            <p>{extra.text}</p>
+          </section>
+        )}
       </div>
 
       <footer className="gd-foot">
         <button ref={noRef} type="button" className="btn" onClick={onCancel}>{cancelText}</button>
-        <button type="button" className="btn btn-send" onClick={onSend}>Send {m.bytes.toLocaleString('en-US')} bytes</button>
+        <button type="button" className="btn btn-send" onClick={onSend}>Send this text · {m.bytes.toLocaleString('en-US')} bytes</button>
       </footer>
     </dialog>
   )

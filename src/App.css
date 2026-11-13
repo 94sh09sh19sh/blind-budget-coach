@@ -249,6 +249,10 @@ tr.done select.cat { border-color: var(--device-line); color: var(--device-ink);
 .gd-keep-list li { display: flex; align-items: center; gap: 8px; font-size: var(--fs-md); font-weight: 550; }
 .gd-keep-list li::before { content: ""; width: 14px; height: 14px; border-radius: 4px; border: 2px solid var(--device); background: linear-gradient(135deg, transparent 45%, var(--device) 45% 55%, transparent 55%); flex: none; }
 .gd-keep-note { margin: var(--sp-4) 0 0; font-size: var(--fs-sm); color: var(--muted); }
+.gd-extra { grid-column: 1 / -1; padding: var(--sp-3) var(--sp-5); border-top: 1px solid var(--cloud-line); background: var(--cloud-soft); }
+.gd-extra h3 { margin: 0 0 4px; font-size: var(--fs-sm); font-weight: 650; color: var(--cloud-ink); }
+.gd-extra p { margin: 0; font-size: var(--fs-sm); color: var(--ink); max-width: 90ch; text-wrap: pretty; }
+.csp-note { margin-top: var(--sp-3); overflow-wrap: anywhere; }
 .gd-foot { display: flex; justify-content: flex-end; gap: var(--sp-3); padding: var(--sp-3) var(--sp-5); border-top: 1px solid var(--line); background: var(--surface); }
 .gd-foot .btn { min-height: 40px; padding-inline: 18px; }
 

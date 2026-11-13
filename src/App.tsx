@@ -35,7 +35,7 @@ const MODES: { mode: Mode; side: Side; use: string; why: string }[] = [
   { mode: 'ONLY_ON_DEVICE', side: 'device', use: 'Statements and samples', why: 'Each transaction is classified by the on-device model in this browser, and the app does not send it anywhere. Obvious payroll-deposit wording is decided by a local rule instead.' },
   { mode: 'PREFER_IN_CLOUD', side: 'cloud', use: 'Questions', why: 'The cloud writes a query plan from your question and column names, after you approve. Declined or offline: a fixed pattern is picked here.' },
   { mode: 'ONLY_IN_CLOUD', side: 'cloud', use: 'Budget advice', why: 'Sends whole-number category percentages only, after you approve.' },
-  { mode: 'LOCAL_RULES', side: 'rules', use: 'No model available', why: 'Keyword rules in this page. Nothing is uploaded.' },
+  { mode: 'LOCAL_RULES', side: 'rules', use: 'No model available', why: 'Keyword rules in this page. This step makes no network request.' },
 ]
 
 export default function App() {
@@ -200,7 +200,7 @@ export default function App() {
       const d = route({ level, deviceModel: a === 'available' || a === 'downloadable' || a === 'downloading' ? 'available' : 'unavailable', online, consent: false })
       if (d.side === 'device') {
         setDl(0)
-        startPhase({ label: 'Starting the on-device model', detail: 'First start takes about 15–30 s.', where: 'device' })
+        startPhase({ label: 'Starting the on-device model', detail: 'First start takes about 15–40 s.', where: 'device' })
         const model = await createClassifier((p) => setDl(p))
         const batchN = DEFAULT_BATCH_SIZE
         const bm = batchN > 1 ? createBatchClassifier((p) => setDl(p)) : null
@@ -238,7 +238,7 @@ export default function App() {
         setCats((prev) => { persist(prev, counts); return prev })
       } else {
         // 分類走本機規則；雲端不碰使用者明細
-        const why = d.side === 'cloud' ? 'No on-device model; using local rules. Nothing is uploaded.' : d.reason
+        const why = d.side === 'cloud' ? 'No on-device model; using local rules. This step makes no network request.' : d.reason
         runRules(why, overrides)
         setNote(why)
       }
@@ -380,7 +380,7 @@ export default function App() {
               <h2 id="empty-title" className="empty-title">See your spending without uploading your statement</h2>
               <ol className="steps">
                 <li><span className="step-n">1</span><div><b>Load a statement</b><span>A CSV from your bank, or a synthetic sample.</span></div></li>
-                <li><span className="step-n">2</span><div><b>Classify on this device</b><span>Each row is categorized here. Nothing is uploaded.</span></div></li>
+                <li><span className="step-n">2</span><div><b>Classify on this device</b><span>Each row is categorized here. This step makes no network request.</span></div></li>
                 <li><span className="step-n">3</span><div><b>Ask a question</b><span>The cloud sees only the text you approve at the gate.</span></div></li>
               </ol>
               <div className="empty-actions">
@@ -389,7 +389,7 @@ export default function App() {
                 <span className="or">or</span>
                 <DropZone dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
               </div>
-              <p className="fine">Samples use fictional merchants. You can verify the zero-upload claim in DevTools → Network.</p>
+              <p className="fine">Samples use fictional merchants. To check for yourself, open DevTools → Network before you classify: no request should appear while rows are categorized.</p>
             </section>
           ) : (
             <section className="card source" aria-labelledby="source-title">
@@ -469,7 +469,7 @@ export default function App() {
                       <div className="progress-detail">
                         <span className="mono">{prog.done} / {prog.total} merchants</span>
                         {workingKeys.length > 0 && <span>now: <code>{workingKeys.join(', ')}</code></span>}
-                        {prog.done === 0 && <span>The first call warms up the model (about 15–30 s); then about 1–2 s per merchant.</span>}
+                        {prog.done === 0 && <span>The first call warms up the model (about 15–40 s); then about 1–2 s per merchant.</span>}
                         {prog.last && <span className="muted">last: {prog.last.key} → {prog.last.category ?? 'unknown'}</span>}
                       </div>
                     </>
@@ -651,7 +651,7 @@ export default function App() {
               <span className="card-meta mono">{sentBytes.toLocaleString('en-US')} B total</span>
             </div>
             {ledger.length === 0 ? (
-              <p className="ledger-empty"><b>Nothing has left this device.</b> Each request you approve is listed here with the exact text that was sent.</p>
+              <p className="ledger-empty"><b>No cloud request has been sent since the last erase.</b> Each request you approve is listed here with the exact text that was sent.</p>
             ) : (
               <ol className="ledger-list">
                 {[...ledger].reverse().map((e) => (

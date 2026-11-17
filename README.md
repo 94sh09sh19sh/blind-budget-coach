@@ -21,7 +21,7 @@ The app creates its models with `getGenerativeModel` and chooses an `InferenceMo
 | `ONLY_IN_CLOUD` | Budget advice from category percentages | Gemini in the cloud, after you approve the outbound text |
 | (none) | No on-device model available: local keyword rules. Also obvious payroll-deposit wording (for example `DIRECT DEP`, `PAYROLL`), which a local rule labels Income before the model is asked | JavaScript in the page |
 
-Classification is hard-wired to `ONLY_ON_DEVICE`, and `src/lib/ai.ts` is the only file that imports `firebase/ai`. The only cloud calls are the query-plan and budget-advice requests below, and both sit behind the approval dialog. No code path sends your transactions to the cloud.
+Classification is hard-wired to `ONLY_ON_DEVICE`, and `src/lib/ai.ts` is the only file that creates models and runs inference (`src/firebase.ts` imports `firebase/ai` only to create the AI instance with `getAI`). The only cloud calls are the query-plan and budget-advice requests below, and both sit behind the approval dialog. No code path sends your transactions to the cloud.
 
 ## Routing table
 

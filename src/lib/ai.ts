@@ -1,4 +1,4 @@
-// 所有模型推論都走 Firebase AI Logic（firebase/ai 的混合推論）。這裡是唯一碰 SDK 的地方。
+// 所有模型推論都走 Firebase AI Logic（firebase/ai 的混合推論）。這裡是唯一建立模型並做推論的地方（firebase.ts 只用 getAI 建立 AI 物件）。
 // 裝置端：getGenerativeModel + InferenceMode.ONLY_ON_DEVICE；雲端：PREFER_IN_CLOUD 或 ONLY_IN_CLOUD。
 // SDK 的裝置端路徑每次呼叫都會再建立一個 Chrome session（用 createOptions.initialPrompts 帶系統提示），
 // 結構化輸出只能設在模型層級（promptOptions.responseConstraint），所以每種任務各建一個模型物件。

@@ -199,6 +199,6 @@ Not tested:
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
 
-The sample merchants are fictional. Chrome, Gemini, Firebase and reCAPTCHA are trademarks of Google LLC. This project is independent and is not affiliated with or endorsed by Google.
+The sample merchants are fictional; any resemblance to real businesses is coincidental. Chrome, Gemini, Firebase and reCAPTCHA are trademarks of Google LLC. This project is independent and is not affiliated with or endorsed by Google.
 
 <!-- token-lint: off -->

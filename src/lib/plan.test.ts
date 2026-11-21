@@ -4,6 +4,9 @@ import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, a
 import type { Classified } from './aggregate'
 import type { CloudCall } from './ai'
 import type { TimelineEntry } from './router'
+import sample60 from '../../public/samples/sample-statement-2.csv?raw'
+import { detectSign, guessColumns, parseCsv, toTransactions } from './csv'
+import { classifyByRules } from './rules'
 
 const tx = (id: number, date: string, desc: string, amount: number, category: Classified['category']): Classified => ({ id, date, desc, amount, category })
 const DATA: Classified[] = [
@@ -76,12 +79,43 @@ describe('runPlan', () => {
     expect(runPlan({ filter: { direction: 'income' }, aggregate: 'sum' }, DATA).rows[0].value).toBe(1000)
     expect(runPlan({ filter: { direction: 'all' }, aggregate: 'count' }, DATA).rows[0].value).toBe(7)
   })
+  it('計畫點名 Income 或 Transfers 時才算進去；只點名 Income 且沒寫方向時算收入', () => {
+    expect(runPlan({ filter: { categories: ['Income'] }, aggregate: 'sum' }, DATA).rows[0]).toEqual({ label: 'Total', value: 1000, count: 1 })
+    expect(runPlan({ filter: { categories: ['Transfers'] }, aggregate: 'sum' }, DATA).rows[0]).toEqual({ label: 'Total', value: 200, count: 1 })
+    // 明寫 spend 時照字面：收入是正數，不算
+    expect(runPlan({ filter: { categories: ['Income'], direction: 'spend' }, aggregate: 'sum' }, DATA).rows[0].count).toBe(0)
+    // 沒點名時照舊排除收入與轉帳
+    expect(runPlan({ filter: { categories: ['Dining', 'Transfers'] }, aggregate: 'sum' }, DATA).rows[0].value).toBe(260)
+    expect(runPlan({ groupBy: 'category', aggregate: 'sum' }, DATA).rows.map((r) => r.label)).not.toContain('Transfers')
+  })
+  it('固定樣式的 Income 帶 direction income', () => {
+    expect(patternToPlan({ pattern: 'category_total', category: 'Income' })).toEqual({ filter: { categories: ['Income'], direction: 'income' }, aggregate: 'sum' })
+    expect(patternToPlan({ pattern: 'category_average', category: 'Income' })).toEqual({ filter: { categories: ['Income'], direction: 'income' }, aggregate: 'avg' })
+    expect(patternToPlan({ pattern: 'category_total', category: 'Groceries' })).toEqual({ filter: { categories: ['Groceries'] }, aggregate: 'sum' })
+  })
   it('沒有符合的列回 0', () => {
     expect(runPlan({ filter: { merchantContains: 'zzz' }, aggregate: 'sum' }, DATA).rows).toEqual([{ label: 'Total', value: 0, count: 0 }])
   })
   it('isoDate', () => {
     expect(isoDate('2/5/2026')).toBe('2026-02-05')
     expect(isoDate('foo')).toBeNull()
+  })
+})
+
+describe('問收入與轉帳（60 筆範例，規則分類）', () => {
+  const p = parseCsv(sample60)
+  const cols = guessColumns(p.headers)
+  const data: Classified[] = toTransactions(p, cols, detectSign(p, cols)).map((t) => ({ ...t, category: classifyByRules(t.desc) }))
+  const ask = (q: string) => runPlan(patternToPlan(matchByKeywords(q)!)!, data).rows[0]
+  it('固定樣式：收入是兩筆薪資合計 4,577.49', () => {
+    expect(ask('How much income did I get?')).toEqual({ label: 'Total', value: 4577.49, count: 2 })
+    expect(ask('What is my total salary?')).toEqual({ label: 'Total', value: 4577.49, count: 2 })
+  })
+  it('固定樣式：轉出的轉帳合計', () => {
+    expect(ask('How much did I transfer?')).toEqual({ label: 'Total', value: 1366.32, count: 3 })
+  })
+  it('雲端計畫只寫 categories: ["Income"]、沒寫 direction：同樣是 4,577.49', () => {
+    expect(runPlan({ filter: { categories: ['Income'] }, aggregate: 'sum' }, data).rows[0]).toEqual({ label: 'Total', value: 4577.49, count: 2 })
   })
 })
 

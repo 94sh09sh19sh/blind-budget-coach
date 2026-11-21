@@ -159,10 +159,12 @@ export interface PlanResult { rows: ResultRow[]; matched: number; aggregate: Agg
 /** 白名單執行器：只做篩選、分組、彙總、排序、取前 N，沒有 eval，沒有動態欄位。 */
 export function runPlan(plan: QueryPlan, txs: Classified[]): PlanResult {
   const f = plan.filter ?? {}
-  const dir: Direction = f.direction ?? 'spend'
+  // 沒寫方向時預設算支出；計畫只點名 Income 時當成收入（否則問收入一定是 0）
+  const dir: Direction = f.direction ?? (f.categories?.length && f.categories.every((c) => c === 'Income') ? 'income' : 'spend')
   const needle = f.merchantContains?.toUpperCase()
   const matched = txs.filter((t) => {
-    if (dir === 'spend' && (t.amount >= 0 || t.category === 'Income' || t.category === 'Transfers')) return false
+    // 支出預設不含收入與轉帳類別；計畫明確點名該類別時才算進去（例如「轉帳了多少」）
+    if (dir === 'spend' && (t.amount >= 0 || ((t.category === 'Income' || t.category === 'Transfers') && !f.categories?.includes(t.category)))) return false
     if (dir === 'income' && t.amount <= 0) return false
     if (f.categories && (!t.category || !f.categories.includes(t.category))) return false
     if (needle && !t.desc.toUpperCase().includes(needle)) return false
@@ -217,16 +219,20 @@ export const PATTERNS: { id: PatternId; label: string; example: string }[] = [
 
 export const EXAMPLE_QUESTIONS = PATTERNS.map((p) => p.example)
 
+/** 單一類別的篩選；Income 算入帳的金額（收入是正數，預設的支出方向會把它排除） */
+const categoryFilter = (cat: Category): NonNullable<QueryPlan['filter']> =>
+  cat === 'Income' ? { categories: [cat], direction: 'income' } : { categories: [cat] }
+
 export function patternToPlan(c: PatternChoice): QueryPlan | null {
   switch (c.pattern) {
     case 'top_categories': return { groupBy: 'category', aggregate: 'sum', sort: 'value_desc', limit: 5 }
     case 'monthly_spend': return { groupBy: 'month', aggregate: 'sum', sort: 'label_asc' }
     case 'top_merchants': return { groupBy: 'merchant', aggregate: 'sum', sort: 'value_desc', limit: 10 }
     case 'category_total':
-      if (c.category) return { filter: { categories: [c.category] }, aggregate: 'sum' }
+      if (c.category) return { filter: categoryFilter(c.category), aggregate: 'sum' }
       if (c.text && c.text.trim()) return { filter: { merchantContains: c.text.trim().slice(0, MAX_TEXT) }, aggregate: 'sum' }
       return null
-    case 'category_average': return c.category ? { filter: { categories: [c.category] }, aggregate: 'avg' } : null
+    case 'category_average': return c.category ? { filter: categoryFilter(c.category), aggregate: 'avg' } : null
     case 'count_over': return typeof c.amount === 'number' && c.amount >= 0 ? { filter: { amountMin: c.amount }, aggregate: 'count' } : null
   }
 }

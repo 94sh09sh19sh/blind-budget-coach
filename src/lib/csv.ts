@@ -6,25 +6,60 @@ export interface ColumnMap { date: string; description: string; amount: string; 
 export interface Tx { id: number; date: string; desc: string; amount: number }
 export interface ParsedCsv { headers: string[]; rows: Record<string, string>[] }
 
+/** 標題列前面有摘要區時，往下找標題列的範圍（前幾列） */
+const HEADER_SEARCH_ROWS = 20
+
+/**
+ * 第一行預設是標題列。第一行猜不出日期、說明、金額三欄時（例如對帳單前面先有期初餘額、借貸合計的摘要區），
+ * 往下找前 20 列裡第一個猜得出三欄的列，從那一列開始讀；找不到就照第一行讀（與原本相同）。
+ * 第一行就猜得出三欄的檔案完全照原本的方式讀。
+ */
 export function parseCsv(text: string): ParsedCsv {
-  const r = Papa.parse<Record<string, string>>(text.trim(), { header: true, skipEmptyLines: true })
-  return { headers: r.meta.fields ?? [], rows: r.data }
+  const src = text.trim()
+  const r = Papa.parse<Record<string, string>>(src, { header: true, skipEmptyLines: true })
+  const headers = r.meta.fields ?? []
+  if (!hasAllColumns(guessColumns(headers))) {
+    const cells = Papa.parse<string[]>(src, { header: false, skipEmptyLines: true }).data
+    const start = cells.slice(0, HEADER_SEARCH_ROWS).findIndex((row, i) => {
+      if (i === 0) return false
+      const m = guessColumns(row)
+      // 三欄要是不同的格子，避免一格同時含 date、name、total 之類字樣的資料列被當成標題
+      return hasAllColumns(m) && new Set([m.date, m.description, isSplit(m) ? m.debit : m.amount]).size === 3
+    })
+    if (start > 0) {
+      const rest = Papa.parse<Record<string, string>>(Papa.unparse(cells.slice(start)), { header: true, skipEmptyLines: true, delimiter: ',' })
+      return { headers: rest.meta.fields ?? [], rows: rest.data }
+    }
+  }
+  return { headers, rows: r.data }
 }
 
-const GUESS: Record<keyof ColumnMap, RegExp> = {
+/** 日期、說明、金額（或 Debit／Credit 兩欄）都猜得到 */
+function hasAllColumns(m: ColumnMap): boolean {
+  return !!m.date && !!m.description && (!!m.amount || isSplit(m))
+}
+
+const GUESS: Record<Exclude<keyof ColumnMap, 'description'>, RegExp> = {
   date: /date|posted|time/i,
-  description: /desc|memo|merchant|payee|detail|narrat|name/i,
   amount: /amount|amt|value|total/i,
   debit: /debit|withdraw|money out|paid out/i,
   credit: /credit|deposit|money in|paid in/i,
 }
 
+/**
+ * 說明欄依序比對，前一組有符合的欄位就用它：description／desc → merchant／payee／name → narrative／memo／details。
+ * 例如 Details,Posting Date,Description,... 要選 Description（Details 欄放的是 DEBIT／CREDIT 這類交易種類）。
+ * 三組合起來與原本的比對字樣相同，所以原本找得到說明欄的檔案仍然找得到。
+ */
+const DESCRIPTION_ORDER: RegExp[] = [/desc/i, /merchant|payee|name/i, /narrat|memo|detail/i]
+
 export function guessColumns(headers: string[]): ColumnMap {
-  const pick = (k: keyof ColumnMap) => headers.find((h) => GUESS[k].test(h)) ?? ''
+  const pick = (k: keyof typeof GUESS) => headers.find((h) => GUESS[k].test(h)) ?? ''
+  const description = DESCRIPTION_ORDER.map((re) => headers.find((h) => re.test(h))).find((h) => h !== undefined) ?? ''
   const debit = pick('debit')
   const credit = pick('credit')
   const split = !!debit && !!credit && debit !== credit
-  return { date: pick('date'), description: pick('description'), amount: pick('amount'), debit: split ? debit : '', credit: split ? credit : '' }
+  return { date: pick('date'), description, amount: pick('amount'), debit: split ? debit : '', credit: split ? credit : '' }
 }
 
 /** 金額字串轉數字：容許 $、千分位逗號、括號負數。無法解析回傳 NaN。 */

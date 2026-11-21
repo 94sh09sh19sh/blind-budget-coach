@@ -9,14 +9,17 @@ import { createDeviceModel, type DeviceModel, type Gen } from './ai'
 // 注意：這裡只用 LanguageModel.availability() 查可用狀態（不是推論）；所有推論都經 lib/ai.ts 的 Firebase AI Logic。
 export type Availability = 'unsupported' | 'unavailable' | 'downloadable' | 'downloading' | 'available'
 
-export async function checkAvailability(): Promise<Availability> {
+/** availability() 的等待上限：某些環境可能遲遲不回，逾時當成不可用（分類改走本機規則），頁面不會停在 Checking model… */
+export const AVAILABILITY_TIMEOUT_MS = 5_000
+
+export async function checkAvailability(timeoutMs = AVAILABILITY_TIMEOUT_MS): Promise<Availability> {
   const LM = (globalThis as any).LanguageModel
   if (!LM) return 'unsupported'
   try {
-    return (await LM.availability({
+    return (await withTimeout(LM.availability({
       expectedInputs: [{ type: 'text', languages: ['en'] }],
       expectedOutputs: [{ type: 'text', languages: ['en'] }],
-    })) as Availability
+    }) as Promise<Availability>, timeoutMs))
   } catch {
     return 'unavailable'
   }

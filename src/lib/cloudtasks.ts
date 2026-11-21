@@ -105,7 +105,12 @@ export interface AskDeps {
   now?: () => number
   /** 一次雲端呼叫最多等多久（毫秒）；沒給就用 CLOUD_TIMEOUT_MS */
   timeoutMs?: number
+  /** 裝置端選固定樣式最多等多久（毫秒）；沒給就用 DEVICE_CHOOSE_TIMEOUT_MS */
+  deviceTimeoutMs?: number
 }
+
+/** 裝置端選固定樣式的等待上限（與分類單筆的上限相同）。模型卡住時逾時就退回關鍵字比對，不讓範例問題一直停用。 */
+export const DEVICE_CHOOSE_TIMEOUT_MS = 60_000
 
 /** 一次雲端呼叫的等待上限。正常 2～12 秒；超過就當作失敗，不讓介面一直等。 */
 export const CLOUD_TIMEOUT_MS = 45_000
@@ -132,21 +137,30 @@ export async function askFixed(session: AskSession, deps: AskDeps, question: str
   const hit = session.cache.get(key) ?? session.fixedCache.get(fkey)
   if (hit) return { ...hit, cached: true }
   let out: AskOutcome | null = null
+  let kwWhy = why
   if (deps.deviceChoose) {
     const t0 = tm(deps)
+    const limit = deps.deviceTimeoutMs ?? DEVICE_CHOOSE_TIMEOUT_MS
     let choice: PatternChoice | null = null
-    try { choice = validateChoice(JSON.parse(await deps.deviceChoose(question))) } catch { choice = null }
+    let timedOut = false
+    try {
+      choice = validateChoice(JSON.parse(await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => { timedOut = true; reject(new Error('device model timed out')) }, limit)
+        deps.deviceChoose!(question).then((v) => { clearTimeout(timer); resolve(v) }, (e) => { clearTimeout(timer); reject(e) })
+      })))
+    } catch { choice = null }
+    if (timedOut) kwWhy = `The on-device model did not answer within ${Math.round(limit / 1000)} s. ${why}`
     const plan = choice ? patternToPlan(choice) : null
-    deps.log({ task: 'blind analysis: pick fixed pattern', mode: 'ONLY_ON_DEVICE', side: 'device', ms: tm(deps) - t0, bytesSent: 0, reason: why })
+    deps.log({ task: 'blind analysis: pick fixed pattern', mode: 'ONLY_ON_DEVICE', side: 'device', ms: tm(deps) - t0, bytesSent: 0, reason: kwWhy })
     if (plan) out = { plan, source: 'device', note: `Fixed pattern chosen on device. ${why}`, cached: false }
   }
   if (!out) {
     const t0 = tm(deps)
     const choice = matchByKeywords(question)
     const plan = choice ? patternToPlan(choice) : null
-    deps.log({ task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: tm(deps) - t0, bytesSent: 0, reason: why })
+    deps.log({ task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: tm(deps) - t0, bytesSent: 0, reason: kwWhy })
     out = plan
-      ? { plan, source: 'rules', note: `Fixed pattern chosen by keywords. ${why}`, cached: false }
+      ? { plan, source: 'rules', note: `Fixed pattern chosen by keywords. ${kwWhy}`, cached: false }
       : { plan: null, source: 'none', note: 'Could not map that question to one of the six fixed patterns. Try an example question.', cached: false }
   }
   if (out.plan) session.fixedCache.set(fkey, out)

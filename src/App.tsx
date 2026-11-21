@@ -22,6 +22,7 @@ import {
 import { ManifestDialog } from './ui/ManifestDialog'
 import { ModelChoice } from './ui/ModelChoice'
 import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON } from './lib/modelchoice'
+import { loadError, loadWarning } from './lib/loadcheck'
 import { IconAlert, IconCheck, IconCloud, IconDevice, IconGate, IconRules, IconUpload, Logo } from './ui/icons'
 
 type Engine = 'device' | 'rules' | null
@@ -33,6 +34,9 @@ type ClassifyProgress = { done: number; total: number; keys: string[]; batch: nu
 const today = () => new Date().toISOString().slice(0, 10)
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
+/** 本機規則 0 列命中時接在規則摘要後面（例如說明欄選錯，內容全是 DEBIT／CREDIT）；欄位對應只在剛載入的檔案才有 */
+const noRuleMatch = (hasColumns: boolean) =>
+  `No row matched a keyword rule. ${hasColumns ? 'Check the Description column under Columns, or pick' : 'Pick'} a category for each row in the table.`
 
 /** 這個頁面的 HTML 裡真的有 CSP 的 meta 才算套用（正式建置才有）；用實際讀到的，不用建置模式推測。標頭版在回應標頭，頁面讀不到，所以不納入判斷。 */
 const cspApplied = typeof document !== 'undefined' && document.querySelector('meta[http-equiv="Content-Security-Policy" i]') !== null
@@ -64,6 +68,8 @@ export default function App() {
   const [phase, setPhase] = useState<Phase | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [note, setNote] = useState('')
+  /** 最近一次載入的檔案讀到 0 筆時的說明（畫面上原有的資料不換掉）；null 表示沒有 */
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
   const [ledger, setLedger] = useState<LedgerEntry[]>([])
   const [online, setOnline] = useState(navigator.onLine)
@@ -128,6 +134,8 @@ export default function App() {
   const sentBytes = ledger.reduce((s, e) => s + e.bytes, 0)
   const hasData = txs.length > 0
   const ready = doneCount > 0
+  /** 部分列讀不懂（略過的列、讀不懂的日期）的提示；只在本機顯示 */
+  const loadNote = useMemo(() => (csv ? loadWarning(csv, cols, txs) : null), [csv, cols, txs])
   const elapsed = phase ? Math.max(0, Math.floor((now - phase.start) / 1000)) : 0
   // 正在處理的店家：還沒完成的前 batch 個（逐筆時就是一個；批次時整批一起標示）
   const workingKeys = useMemo(() => {
@@ -160,8 +168,13 @@ export default function App() {
 
   function load(text: string, name: string, lvl: DataLevel) {
     const p = parseCsv(text)
+    const guessed = guessColumns(p.headers)
+    // 讀到 0 筆就不換掉畫面上原有的資料，只顯示原因（檔名、讀到幾列、找到的欄位名稱、需要哪三欄）
+    const err = loadError({ fileName: name, text, parsed: p, cols: guessed, txs: toTransactions(p, guessed, detectSign(p, guessed)), kept: hasData })
+    setLoadErr(err)
+    if (err) return
     setModelChoice(null)
-    setCsv(p); setRestored([]); setCols(guessColumns(p.headers)); setSignSel('auto'); setLevel(lvl); setFileName(name); setIsRestored(false)
+    setCsv(p); setRestored([]); setCols(guessed); setSignSel('auto'); setLevel(lvl); setFileName(name); setIsRestored(false)
     setCats(new Map()); setEngine(null); setNote(''); setAnswer(null); setAdvice(null); setPending(null); setProg(null); setLastClassifyMs(null); setRunCounts(null)
   }
   async function loadSample(file: string) {
@@ -291,7 +304,7 @@ export default function App() {
   async function erase() {
     await eraseAll()
     setOverrides({}); setTimeline([]); setLedger([]); setCats(new Map()); setRestored([]); setCsv(null); setEngine(null); setProg(null)
-    setAnswer(null); setAdvice(null); setPending(null); setFileName(''); setIsRestored(false); session.current = new AskSession()
+    setAnswer(null); setAdvice(null); setPending(null); setFileName(''); setIsRestored(false); setLoadErr(null); session.current = new AskSession()
     setNote('All local data erased: corrections, timeline, outbound ledger and last statement.')
   }
 
@@ -420,6 +433,7 @@ export default function App() {
                 <span className="or">or</span>
                 <DropZone dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
               </div>
+              {loadErr && <p className="notice notice-warn" role="alert"><IconAlert size={16} /><span>{loadErr}</span></p>}
               <p className="fine">Samples use fictional merchants. To check for yourself, open DevTools → Network before you classify: no request should appear while rows are categorized.</p>
             </section>
           ) : (
@@ -438,6 +452,9 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {loadErr && <p className="notice notice-warn" role="alert"><IconAlert size={16} /><span>{loadErr}</span></p>}
+              {loadNote && <p className="notice notice-warn"><IconAlert size={16} /><span>{loadNote}</span></p>}
 
               {csv && (
                 <details className="columns">
@@ -519,13 +536,13 @@ export default function App() {
                   )}
                 </div>
               )}
-              {!busy && engine && ready && (
+              {!busy && engine && (
                 <p className={`notice ${engine === 'device' ? 'notice-ok' : 'notice-warn'}`}>
                   {engine === 'device' ? <IconCheck size={16} /> : <IconRules size={16} />}
                   <span>
                     {engine === 'device'
                       ? `${runSummary(runCounts, doneCount)}${lastClassifyMs ? ` in ${Math.round(lastClassifyMs / 1000)} s` : ''}. Unknown merchants may be wrong; pick a category to correct it.`
-                      : `Local keyword rules were used (no model). ${note}`}
+                      : `Local keyword rules were used (no model). ${note}${doneCount === 0 ? ` ${noRuleMatch(!!csv)}` : ''}`}
                   </span>
                 </p>
               )}

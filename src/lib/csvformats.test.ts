@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { detectSign, guessColumns, parseAmount, parseCsv, toTransactions } from './csv'
-import { runPlan } from './plan'
+import { isoDate, runPlan } from './plan'
+import { monthOf } from './aggregate'
 import { categoryShares } from './cloudtasks'
 
 // 銀行匯出檔的幾種寫法（2026-11-21 找錯報告第 4、13 項與對照組）。
@@ -67,6 +68,35 @@ describe('標題列前面的摘要區', () => {
   it('沒有標題列的檔案：仍然讀到 0 筆（由讀檔提示說明，見 loadcheck.test.ts）', () => {
     const { txs } = load('"01/02/2026","-12.34","*","","PURCHASE AUTHORIZED ON 12/31 CORNER CAFE"\n"01/03/2026","-45.10","*","","CITY FRESH GROCERY"')
     expect(txs).toHaveLength(0)
+  })
+})
+
+describe('金額與日期的寫法', () => {
+  it('減號在任何位置都是負數', () => {
+    const cases: [string, number][] = [['$-12.34', -12.34], ['12.34-', -12.34], ['USD -5.00', -5], ['-$1,234.50', -1234.5], ['−12.00', -12]]
+    for (const [s, want] of cases) expect(parseAmount(s), s).toBe(want)
+  })
+  it('小數點用逗號的寫法不支援：讀成 NaN（略過並計入讀不懂的列），不變成 1234', () => {
+    for (const s of ['12,34', '-12,34', '1.234,56', '1,5']) expect(parseAmount(s), s).toBeNaN()
+    // 千分位照常
+    for (const [s, want] of [['1,234', 1234], ['12,345.67', 12345.67], ['$1,234,567.89', 1234567.89]] as const) expect(parseAmount(s), s).toBe(want)
+  })
+  it('M/D/YY：兩位數年份當成 20YY', () => {
+    expect(isoDate('01/03/26')).toBe('2026-01-03')
+    expect(monthOf('1/3/26')).toBe('2026-01')
+    expect(isoDate('1/3/2026')).toBe('2026-01-03')
+  })
+  it('DD/MM 與其他寫法不支援：回傳讀不懂，不當成第 25 月', () => {
+    expect(isoDate('25/01/2026')).toBeNull()
+    expect(monthOf('25/01/2026')).toBe('unknown')
+    expect(isoDate('Jan 3, 2026')).toBeNull()
+    expect(monthOf('1/3/202')).toBe('unknown')
+  })
+  it('原本支援的寫法不變', () => {
+    expect(isoDate('2026-01-03T23:59:00Z')).toBe('2026-01-03')
+    expect(monthOf('2026-01-03')).toBe('2026-01')
+    expect(monthOf('3/7/2026')).toBe('2026-03')
+    expect(isoDate('12/31/2025')).toBe('2025-12-31')
   })
 })
 

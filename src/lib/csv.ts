@@ -62,11 +62,16 @@ export function guessColumns(headers: string[]): ColumnMap {
   return { date: pick('date'), description, amount: pick('amount'), debit: split ? debit : '', credit: split ? credit : '' }
 }
 
-/** 金額字串轉數字：容許 $、千分位逗號、括號負數。無法解析回傳 NaN。 */
+/**
+ * 金額字串轉數字：容許 $、千分位逗號、括號負數，減號在任何位置都算負數（-12.34、-$12.34、$-12.34、USD -5.00、12.34-）。
+ * 小數點用逗號的寫法（12,34、1.234,56）不支援：回傳 NaN（該列會被略過，讀檔提示會算進讀不懂的列），不要靜靜變成 1234。
+ * 無法解析回傳 NaN。
+ */
 export function parseAmount(s: string): number {
   const t = (s ?? '').trim()
   if (!t) return NaN
-  const neg = /^\(.*\)$/.test(t) || t.startsWith('-')
+  if (/\d,\d{1,2}(?!\d)/.test(t) || /\.\d{3},/.test(t)) return NaN
+  const neg = /^\(.*\)$/.test(t) || /[-−]/.test(t)
   const digits = t.replace(/[^0-9.]/g, '')
   if (!/[0-9]/.test(digits)) return NaN
   const n = Number(digits)

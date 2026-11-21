@@ -1,6 +1,6 @@
 // 盲眼分析的查詢計畫：JSON 結構、嚴格驗證器、白名單執行器、六種固定樣式。全部是純函式，不碰網路與模型。
 import { CATEGORIES, isCategory, type Category } from './categories'
-import { monthOf, type Classified } from './aggregate'
+import { monthOf, parseUsDate, type Classified } from './aggregate'
 import { normalizeDesc } from './normalize'
 
 export type Direction = 'spend' | 'income' | 'all'
@@ -144,12 +144,12 @@ export const PLAN_SCHEMA = {
   },
 }
 
-/** 取 YYYY-MM-DD；支援 YYYY-MM-DD 與 M/D/YYYY，其他回傳 null。 */
+/** 取 YYYY-MM-DD；支援 YYYY-MM-DD、M/D/YYYY 與 M/D/YY（月日不合理的回傳 null，見 parseUsDate），其他回傳 null。 */
 export function isoDate(s: string): string | null {
-  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
   if (m) return `${m[1]}-${m[2]}-${m[3]}`
-  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s)
-  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  const u = parseUsDate(s)
+  if (u) return `${u.y}-${u.m}-${u.d}`
   return null
 }
 

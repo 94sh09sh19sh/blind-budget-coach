@@ -4,12 +4,24 @@ import type { Tx } from './csv'
 
 export interface Classified extends Tx { category: Category | null }
 
-/** 取 YYYY-MM；支援 YYYY-MM-DD 與 M/D/YYYY，其他回傳 'unknown'。 */
+/**
+ * 美式日期 M/D/YYYY 或 M/D/YY（兩位數年份當成 20YY）。
+ * 月份不在 1～12、日不在 1～31 回傳 null：例如 DD/MM 寫法的 25/01/2026 不支援，不當成第 25 月。
+ */
+export function parseUsDate(s: string): { y: string; m: string; d: string } | null {
+  const r = /^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2}(?!\d))/.exec(s)
+  if (!r) return null
+  const mo = Number(r[1]), da = Number(r[2])
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) return null
+  return { y: r[3].length === 2 ? `20${r[3]}` : r[3], m: r[1].padStart(2, '0'), d: r[2].padStart(2, '0') }
+}
+
+/** 取 YYYY-MM；支援 YYYY-MM-DD、M/D/YYYY 與 M/D/YY，其他回傳 'unknown'。 */
 export function monthOf(date: string): string {
-  let m = /^(\d{4})-(\d{2})/.exec(date)
+  const m = /^(\d{4})-(\d{2})/.exec(date)
   if (m) return `${m[1]}-${m[2]}`
-  m = /^(\d{1,2})\/\d{1,2}\/(\d{4})/.exec(date)
-  if (m) return `${m[2]}-${m[1].padStart(2, '0')}`
+  const u = parseUsDate(date)
+  if (u) return `${u.y}-${u.m}`
   return 'unknown'
 }
 

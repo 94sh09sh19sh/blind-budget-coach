@@ -22,7 +22,7 @@ import {
 } from './lib/store'
 import { ManifestDialog } from './ui/ManifestDialog'
 import { ModelChoice } from './ui/ModelChoice'
-import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON } from './lib/modelchoice'
+import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON, startingPhase } from './lib/modelchoice'
 import { dataPeriod, emptyAnswerNote, loadError, loadWarning } from './lib/loadcheck'
 import { ERASED_ELSEWHERE, openEraseChannel, type EraseChannel } from './lib/erasechannel'
 import { IconAlert, IconCheck, IconCloud, IconDevice, IconGate, IconRules, IconUpload, Logo } from './ui/icons'
@@ -273,7 +273,8 @@ export default function App() {
       const d = route({ level, deviceModel: path === 'device' ? 'available' : 'unavailable', online, consent: false })
       if (d.side === 'device') {
         setDl(0)
-        startPhase({ label: 'Starting the on-device model', detail: 'First start takes about 15–40 s.', where: 'device' })
+        // 選了下載而且還沒下載好：標題與說明改成正在下載約 4 GB（見 startingPhase）
+        startPhase({ ...startingPhase(a, approvedDownload), where: 'device' })
         const model = await createClassifier((p) => setDl(p))
         const batchN = DEFAULT_BATCH_SIZE
         const bm = batchN > 1 ? createBatchClassifier((p) => setDl(p)) : null

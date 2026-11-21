@@ -6,6 +6,7 @@ import routerSrc from './router.ts?raw'
 import loadcheckSrc from './loadcheck.ts?raw'
 import storeSrc from './store.ts?raw'
 import eraseSrc from './erasechannel.ts?raw'
+import modelchoiceSrc from './modelchoice.ts?raw'
 import indexHtml from '../../index.html?raw'
 import readme from '../../README.md?raw'
 
@@ -23,6 +24,7 @@ const UI_FILES: Array<[string, string]> = [
   ['loadcheck.ts', noComments(loadcheckSrc)],
   ['store.ts', noComments(storeSrc)],
   ['erasechannel.ts', noComments(eraseSrc)],
+  ['modelchoice.ts', noComments(modelchoiceSrc)],
   ['index.html', indexHtml],
 ]
 

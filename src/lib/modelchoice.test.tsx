@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import appSrc from '../App.tsx?raw'
 import { ModelChoice } from '../ui/ModelChoice'
-import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON } from './modelchoice'
+import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON, startingPhase } from './modelchoice'
 import { NOT_DOWNLOADED_REASON, route } from './router'
 import type { Availability } from './ondevice'
 
@@ -103,5 +103,23 @@ describe('App 的接線（原始碼順序）', () => {
     expect(appSrc).toContain('onClick={() => classify()}')
     // 只有 ModelChoice 的下載按鈕傳 true
     expect(appSrc.match(/classify\(true\)/g)?.length).toBe(1)
+  })
+})
+
+describe('按了下載之後的等待畫面（找錯第 12 項）', () => {
+  it('選了下載而且還沒下載好：標題與說明寫正在下載約 4 GB、可能很久、重新整理可改用規則', () => {
+    for (const a of ['downloadable', 'downloading'] as const) {
+      expect(startingPhase(a, true)).toEqual({
+        label: 'Downloading the on-device model (about 4 GB)',
+        detail: 'Chrome downloads it once. This can take a long time; reload the page to use local keyword rules instead.',
+      })
+    }
+  })
+  it('模型已可用：照原本的文字', () => {
+    expect(startingPhase('available', false)).toEqual({ label: 'Starting the on-device model', detail: 'First start takes about 15–40 s.' })
+    expect(startingPhase('available', true)).toEqual({ label: 'Starting the on-device model', detail: 'First start takes about 15–40 s.' })
+  })
+  it('App 用 startingPhase 決定等待畫面的文字', () => {
+    expect(appSrc).toContain('startPhase({ ...startingPhase(a, approvedDownload), where: \'device\' })')
   })
 })

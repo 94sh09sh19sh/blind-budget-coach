@@ -22,7 +22,7 @@ import {
 import { ManifestDialog } from './ui/ManifestDialog'
 import { ModelChoice } from './ui/ModelChoice'
 import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON } from './lib/modelchoice'
-import { loadError, loadWarning } from './lib/loadcheck'
+import { dataPeriod, emptyAnswerNote, loadError, loadWarning } from './lib/loadcheck'
 import { IconAlert, IconCheck, IconCloud, IconDevice, IconGate, IconRules, IconUpload, Logo } from './ui/icons'
 
 type Engine = 'device' | 'rules' | null
@@ -136,6 +136,8 @@ export default function App() {
   const ready = doneCount > 0
   /** 部分列讀不懂（略過的列、讀不懂的日期）的提示；只在本機顯示 */
   const loadNote = useMemo(() => (csv ? loadWarning(csv, cols, txs) : null), [csv, cols, txs])
+  /** 資料期間（最早到最晚日期）：只在本機計算與顯示，不放進任何雲端請求 */
+  const period = useMemo(() => dataPeriod(txs), [txs])
   const elapsed = phase ? Math.max(0, Math.floor((now - phase.start) / 1000)) : 0
   // 正在處理的店家：還沒完成的前 batch 個（逐筆時就是一個；批次時整批一起標示）
   const workingKeys = useMemo(() => {
@@ -374,6 +376,8 @@ export default function App() {
   const maxSpend = Math.max(1, ...spendRows.map(([, v]) => v))
   const totalSpend = spendRows.reduce((s, [, v]) => s + v, 0)
   const maxRow = Math.max(1, ...(answer?.result?.rows.map((r) => Math.abs(r.value)) ?? [1]))
+  // 答案 0 筆時的本機提示（計畫有日期篩選時寫出對帳單涵蓋的期間）
+  const emptyNote = answer ? emptyAnswerNote(answer.outcome.plan, answer.result, period) : null
   const fmt = (n: number, agg: string) => (agg === 'count' ? String(n) : money(n))
   const deviceCalls = timeline.filter((t) => t.side === 'device').length
   const cloudCalls = timeline.filter((t) => t.side === 'cloud').length
@@ -442,7 +446,7 @@ export default function App() {
                 <div className="source-file">
                   <h2 id="source-title" className="card-title">{fileName}</h2>
                   <p className="card-meta">
-                    {plural(txs.length, 'transaction')} · {uniqueKeys.length} unique merchants · {level === 'user-detail' ? 'your file' : 'synthetic sample'}{isRestored ? ' · restored from this browser' : ''}
+                    {plural(txs.length, 'transaction')} · {uniqueKeys.length} unique merchants · {level === 'user-detail' ? 'your file' : 'synthetic sample'}{isRestored ? ' · restored from this browser' : ''}{period ? ` · dates ${period.from} to ${period.to}` : ''}
                   </p>
                 </div>
                 <div className="source-actions">
@@ -638,7 +642,7 @@ export default function App() {
                   <SideTag side={answer.outcome.source === 'none' ? 'none' : answer.outcome.source} />
                   <span>{answer.outcome.note}{answer.outcome.cached ? ' (cached answer, no new request)' : ''}</span>
                 </p>
-                {answer.result ? (
+                {answer.result && answer.result.rows.length > 0 && (
                   <table className="table result">
                     <thead><tr><th scope="col">{answer.result.groupBy ?? 'Result'}</th><th scope="col" className="num">{answer.result.aggregate}</th><th scope="col" className="num">rows</th><th scope="col"><span className="sr-only">Bar</span></th></tr></thead>
                     <tbody>
@@ -650,7 +654,9 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
-                ) : !answer.outcome.unsupported && <p className="notice notice-warn">No result.</p>}
+                )}
+                {emptyNote && <p className="notice notice-warn">{emptyNote}</p>}
+                {!answer.result && !answer.outcome.unsupported && <p className="notice notice-warn">No result.</p>}
               </div>
             )}
           </section>

@@ -1,7 +1,7 @@
-// 讀檔檢查：讀到 0 筆時的說明、部分列讀不懂時的提示。
+// 讀檔檢查與資料期間：讀到 0 筆時的說明、部分列讀不懂時的提示、資料期間、答案 0 筆時的日期提示。
 // 全部是純函式，結果只在本機顯示在畫面上；出境清單由 cloudtasks.ts 組成，不讀這裡的任何結果，所以不會進雲端請求。
 import { isSplit, type ColumnMap, type ParsedCsv, type Tx } from './csv'
-import { isoDate } from './plan'
+import { isoDate, type PlanResult, type QueryPlan } from './plan'
 
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
 
@@ -81,4 +81,31 @@ export function loadWarning(p: ParsedCsv, cols: ColumnMap, txs: Tx[]): string | 
     }
   }
   return parts.length ? parts.join(' ') : null
+}
+
+/** 資料期間：讀得懂的日期裡最早到最晚（YYYY-MM-DD）；一筆都讀不懂回傳 null。只在本機顯示。 */
+export function dataPeriod(txs: Tx[]): { from: string; to: string } | null {
+  let from = '', to = ''
+  for (const t of txs) {
+    const d = isoDate(t.date)
+    if (!d) continue
+    if (!from || d < from) from = d
+    if (!to || d > to) to = d
+  }
+  return from ? { from, to } : null
+}
+
+/**
+ * 答案 0 筆時的本機提示。計畫有日期篩選時寫出計畫要的期間與對帳單涵蓋的期間
+ * （例如用 last month 問，雲端依今天日期寫出的期間落在範例資料之外）；
+ * 有分組又 0 筆時說沒有符合的交易（不然只剩表頭）。其他情形回傳 null。
+ */
+export function emptyAnswerNote(plan: QueryPlan | null, result: PlanResult | null, period: { from: string; to: string } | null): string | null {
+  if (!plan || !result || result.matched > 0) return null
+  const f = plan.filter ?? {}
+  if (f.dateFrom || f.dateTo) {
+    const range = f.dateFrom && f.dateTo ? `${f.dateFrom} to ${f.dateTo}` : f.dateFrom ? `from ${f.dateFrom}` : `up to ${f.dateTo}`
+    return `No transactions matched. The plan asks for dates ${range}${period ? `, and this statement covers ${period.from} to ${period.to}` : ''}.`
+  }
+  return result.rows.length === 0 ? 'No transactions matched.' : null
 }

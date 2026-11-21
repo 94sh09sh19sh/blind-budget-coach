@@ -3,7 +3,12 @@ import appSrc from '../App.tsx?raw'
 import sample60 from '../../public/samples/sample-statement-2.csv?raw'
 import sample247 from '../../public/samples/sample-statement-1.csv?raw'
 import { detectSign, guessColumns, parseCsv, toTransactions } from './csv'
-import { NEEDED_COLUMNS, loadError, loadWarning, looksBinary } from './loadcheck'
+import { NEEDED_COLUMNS, dataPeriod, emptyAnswerNote, loadError, loadWarning, looksBinary } from './loadcheck'
+import { runPlan, type QueryPlan } from './plan'
+import { classifyByRules } from './rules'
+import { normalizeDesc } from './normalize'
+import { spendByCategory, type Classified } from './aggregate'
+import { buildAdviceManifest, buildPlanManifest, categoryShares, type ColumnInfo } from './cloudtasks'
 
 // 找錯報告第 1、13 項：自己的 CSV 讀到 0 筆時要說原因；部分列讀不懂時要提示。
 
@@ -91,6 +96,55 @@ describe('兩份範例：沒有錯誤也沒有提示', () => {
       expect(r.error).toBeNull()
       expect(r.warning).toBeNull()
     }
+  })
+})
+
+describe('資料期間與答案 0 筆時的提示（找錯第 2 項）', () => {
+  const s60 = check(sample60)
+  const data60: Classified[] = s60.txs.map((t) => ({ ...t, category: classifyByRules(t.desc) }))
+  it('兩份範例的資料期間', () => {
+    expect(dataPeriod(s60.txs)).toEqual({ from: '2026-01-03', to: '2026-03-27' })
+    expect(dataPeriod(check(sample247).txs)).toEqual({ from: '2026-01-01', to: '2026-03-28' })
+  })
+  it('讀不懂的日期不算；一筆都讀不懂回傳 null', () => {
+    expect(dataPeriod([{ id: 1, date: 'Jan 3', desc: 'a', amount: -1 }, { id: 2, date: '2/1/26', desc: 'b', amount: -1 }])).toEqual({ from: '2026-02-01', to: '2026-02-01' })
+    expect(dataPeriod([{ id: 1, date: '', desc: 'a', amount: -1 }])).toBeNull()
+    expect(dataPeriod([])).toBeNull()
+  })
+  it('計畫的日期落在資料期間外（例如 last month）：0 筆並寫出兩個期間', () => {
+    const plan: QueryPlan = { filter: { dateFrom: '2026-11-01', dateTo: '2026-11-30' }, aggregate: 'sum' }
+    const r = runPlan(plan, data60)
+    expect(r.rows).toEqual([{ label: 'Total', value: 0, count: 0 }])
+    expect(emptyAnswerNote(plan, r, dataPeriod(s60.txs))).toBe('No transactions matched. The plan asks for dates 2026-11-01 to 2026-11-30, and this statement covers 2026-01-03 to 2026-03-27.')
+    const from: QueryPlan = { filter: { dateFrom: '2026-11-01' }, groupBy: 'category', aggregate: 'sum' }
+    expect(emptyAnswerNote(from, runPlan(from, data60), null)).toBe('No transactions matched. The plan asks for dates from 2026-11-01.')
+  })
+  it('有分組又 0 筆：說沒有符合的交易；沒有日期篩選的 Total 0 照舊不加提示；有結果時不加', () => {
+    const g: QueryPlan = { filter: { merchantContains: 'zzz' }, groupBy: 'month', aggregate: 'sum' }
+    expect(emptyAnswerNote(g, runPlan(g, data60), null)).toBe('No transactions matched.')
+    const t: QueryPlan = { filter: { merchantContains: 'zzz' }, aggregate: 'sum' }
+    expect(emptyAnswerNote(t, runPlan(t, data60), null)).toBeNull()
+    const ok: QueryPlan = { filter: { dateFrom: '2026-01-01', dateTo: '2026-01-31' }, aggregate: 'sum' }
+    expect(emptyAnswerNote(ok, runPlan(ok, data60), dataPeriod(s60.txs))).toBeNull()
+    expect(emptyAnswerNote(null, null, null)).toBeNull()
+  })
+  it('資料期間與交易內容不進出境清單', () => {
+    const cols: ColumnInfo[] = [{ name: 'Transaction Date', type: 'date' }, { name: 'Merchant', type: 'text' }, { name: 'Amount', type: 'number' }]
+    const m = buildPlanManifest('How much did I spend last month?', cols, '2026-12-10', s60.txs.length)
+    const a = buildAdviceManifest(categoryShares(spendByCategory(data60)), s60.txs.length)
+    for (const sent of [m.system + m.prompt + JSON.stringify(m.schema), a.system + a.prompt + JSON.stringify(a.schema)]) {
+      for (const t of s60.txs) {
+        expect(sent).not.toContain(t.date)
+        expect(sent).not.toContain(normalizeDesc(t.desc))
+        expect(sent).not.toContain(String(Math.abs(t.amount)))
+      }
+      expect(sent).not.toContain('2026-01-03')
+      expect(sent).not.toContain('2026-03-27')
+    }
+    // App.tsx 組出境清單時不讀資料期間
+    const call = appSrc.split('\n').filter((l) => l.includes('buildPlanManifest(') || l.includes('buildAdviceManifest('))
+    expect(call.length).toBeGreaterThan(0)
+    for (const l of call) expect(l).not.toMatch(/period|dataPeriod/)
   })
 })
 

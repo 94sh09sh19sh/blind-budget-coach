@@ -4,6 +4,7 @@ import dialogSrc from '../ui/ManifestDialog.tsx?raw'
 import disclosureSrc from './disclosure.ts?raw'
 import routerSrc from './router.ts?raw'
 import loadcheckSrc from './loadcheck.ts?raw'
+import storeSrc from './store.ts?raw'
 import indexHtml from '../../index.html?raw'
 import readme from '../../README.md?raw'
 
@@ -19,6 +20,7 @@ const UI_FILES: Array<[string, string]> = [
   ['disclosure.ts', noComments(disclosureSrc)],
   ['router.ts', noComments(routerSrc)],
   ['loadcheck.ts', noComments(loadcheckSrc)],
+  ['store.ts', noComments(storeSrc)],
   ['index.html', indexHtml],
 ]
 

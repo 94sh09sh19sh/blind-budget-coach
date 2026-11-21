@@ -17,7 +17,8 @@ import {
 } from './lib/cloudtasks'
 import { applyOverrides, setOverride, type Overrides } from './lib/overrides'
 import {
-  eraseAll, loadLastRun, loadLedger, loadOverrides, loadTimeline, saveLastRun, saveLedger, saveOverrides, saveTimeline, type LedgerEntry, type RunCounts,
+  LEDGER_NO_ANSWER, LEDGER_PENDING, appendLedger, appendRow, eraseAll, finishLedger, finishRow, loadLastRun, loadLedger, loadOverrides, loadTimeline,
+  saveLastRun, saveOverrides, saveTimeline, type LedgerEntry, type RunCounts,
 } from './lib/store'
 import { ManifestDialog } from './ui/ManifestDialog'
 import { ModelChoice } from './ui/ModelChoice'
@@ -87,6 +88,10 @@ export default function App() {
   const chooser = useRef<DeviceModel | null>(null)
   /** 目前準備送出的出境清單；雲端呼叫寫時間線時一併記進帳本 */
   const outbound = useRef<Manifest | null>(null)
+  /** 送出前先寫進帳本的那一列（id 與送出時間）；回應回來後用結果補上 */
+  const sentRow = useRef<{ id: number; at: number } | null>(null)
+  /** 畫面用：正在等答案的帳本列 id（null 表示沒有在等） */
+  const [waitingRow, setWaitingRow] = useState<number | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const classifyBtn = useRef<HTMLButtonElement>(null)
   const wasBusy = useRef(false)
@@ -191,10 +196,28 @@ export default function App() {
     const entry = { ...e, id: ++tlId.current, at: Date.now() }
     setTimeline((t) => { const n = [...t, entry]; saveTimeline(n); return n })
     const m = outbound.current
-    if (e.side === 'cloud' && e.bytesSent > 0 && m) {
-      const row: LedgerEntry = { id: entry.id, at: entry.at, task: e.task, mode: e.mode, bytes: e.bytesSent, system: m.system, prompt: m.prompt, schema: m.schema, outcome: e.reason }
-      setLedger((l) => { const n = [...l, row]; saveLedger(n); return n })
+    // 帳本收每一列帶位元組的雲端呼叫，不看 side：PREFER_IN_CLOUD 的雲端呼叫失敗、SDK 改由裝置端模型回答時，
+    // 時間線這一列是 Device，但請求本文可能已經送出
+    if (e.bytesSent > 0 && m) {
+      const s = sentRow.current
+      if (s) {
+        // 送出前寫的那一列：補上結果
+        sentRow.current = null; setWaitingRow(null)
+        const done = { at: entry.at, outcome: e.reason }
+        setLedger((l) => finishRow(l, s, done)); finishLedger(s, done)
+      } else {
+        const row: LedgerEntry = { id: entry.id, at: entry.at, task: e.task, mode: e.mode, bytes: e.bytesSent, system: m.system, prompt: m.prompt, schema: m.schema, outcome: e.reason }
+        setLedger((l) => appendRow(l, row)); appendLedger(row)
+      }
     }
+  }
+
+  /** 雲端呼叫送出之前先寫一列帳本：答案回來之前重新整理或關掉分頁，這次請求仍然留在帳本上 */
+  function beforeCloud(m: Manifest) {
+    if (!outbound.current) return
+    const row: LedgerEntry = { id: ++tlId.current, at: Date.now(), task: m.task, mode: m.mode, bytes: m.bytes, system: m.system, prompt: m.prompt, schema: m.schema, outcome: LEDGER_PENDING }
+    sentRow.current = { id: row.id, at: row.at }; setWaitingRow(row.id)
+    setLedger((l) => appendRow(l, row)); appendLedger(row)
   }
 
   function persist(c: Map<number, Category | null>, counts: RunCounts | null = runCounts) {
@@ -312,7 +335,7 @@ export default function App() {
 
   // ---- 盲眼分析 ----
   function deps(): AskDeps {
-    const d: AskDeps = { log, cloud: cloudOk ? firebaseCloudCall : undefined }
+    const d: AskDeps = { log, beforeCloud, cloud: cloudOk ? firebaseCloudCall : undefined }
     if (canUseModelNow(avail)) {
       // 只有模型已經下載好才建立：可下載但還沒下載時，這裡建立會在背景觸發約 4 GB 的下載，所以改走關鍵字比對。
       // 固定樣式用的裝置端模型等到真的要選樣式才建立：走雲端時不必先等它。建立或呼叫失敗就丟錯，由 askFixed 退回關鍵字比對。
@@ -364,7 +387,7 @@ export default function App() {
         const r = await askAdvice(session.current, deps(), p.manifest)
         setAdvice(r.ok ? { advice: r.advice } : { error: r.error })
       }
-    } finally { setAskBusy(false); setPhase(null); outbound.current = null }
+    } finally { setAskBusy(false); setPhase(null); outbound.current = null; sentRow.current = null; setWaitingRow(null) }
   }
   function prepareAdvice() {
     setAdvice(null)
@@ -720,7 +743,7 @@ export default function App() {
                         <span className="ledger-meta mono">{new Date(e.at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · {e.bytes.toLocaleString('en-US')} B</span>
                       </summary>
                       <div className="ledger-body">
-                        <p className="ledger-outcome"><code className="mode">{e.mode}</code> {e.outcome}</p>
+                        <p className="ledger-outcome"><code className="mode">{e.mode}</code> {e.outcome === LEDGER_PENDING && waitingRow !== e.id ? LEDGER_NO_ANSWER : e.outcome}</p>
                         <div className="gd-label">Message sent</div>
                         <pre className="gd-pre" tabIndex={0}>{e.prompt}</pre>
                         <details className="gd-schema">

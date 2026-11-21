@@ -94,6 +94,8 @@ export interface AskDeps {
   /** 有裝置端模型時，由它從六種固定樣式選一種並填參數；回傳原始 JSON 字串 */
   deviceChoose?: (question: string) => Promise<string>
   log: LogFn
+  /** 每次雲端呼叫送出之前呼叫（App 用它先在帳本寫一列，答案回來前關掉頁面也留得下紀錄） */
+  beforeCloud?: (manifest: Manifest) => void
   now?: () => number
   /** 一次雲端呼叫最多等多久（毫秒）；沒給就用 CLOUD_TIMEOUT_MS */
   timeoutMs?: number
@@ -157,12 +159,15 @@ export async function askCloud(session: AskSession, deps: AskDeps, question: str
     session.cloudCalls++
     const t0 = tm(deps)
     let side: Side = 'cloud'
+    deps.beforeCloud?.(manifest)
     try {
       const r = await callCloud(deps, deps.cloud, { mode: manifest.mode, system: manifest.system, prompt: manifest.prompt, schema: manifest.schema })
       side = r.source === 'device' ? 'device' : 'cloud'
       let v
       try { v = validatePlan(JSON.parse(r.text)) } catch { v = { ok: false as const, error: 'response was not valid JSON' } }
-      deps.log({ task: manifest.task, mode: manifest.mode, side, ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: !v.ok ? `Plan rejected (${v.error})${attempt === 0 ? '; retrying once' : ''}.` : v.plan ? 'Plan accepted.' : 'Question reported as out of scope.' })
+      // SDK 回報裝置端：PREFER_IN_CLOUD 的雲端呼叫失敗（請求本文可能已送出），才改由裝置端模型回答；原因寫明，帳本照樣記這一列
+      const via = side === 'device' ? 'The cloud call failed, so the SDK let the on-device model answer. ' : ''
+      deps.log({ task: manifest.task, mode: manifest.mode, side, ms: tm(deps) - t0, bytesSent: manifest.bytes, reason: via + (!v.ok ? `Plan rejected (${v.error})${attempt === 0 ? '; retrying once' : ''}.` : v.plan ? 'Plan accepted.' : 'Question reported as out of scope.') })
       if (v.ok && !v.plan) {
         const out: AskOutcome = { plan: null, source: side === 'cloud' ? 'cloud' : 'device', note: `This question is outside what this app can answer exactly: ${v.unsupported} Try asking for one total, average, count or ranking at a time.`, cached: false, unsupported: true }
         session.cache.set(key, out)
@@ -255,6 +260,7 @@ export async function askAdvice(session: AskSession, deps: AskDeps, manifest: Ma
     if (session.cloudCalls >= session.maxCalls) return { ok: false, error: `Session limit of ${session.maxCalls} cloud calls reached.` }
     session.cloudCalls++
     const t0 = tm(deps)
+    deps.beforeCloud?.(manifest)
     try {
       const r = await callCloud(deps, deps.cloud, { mode: manifest.mode, system: manifest.system, prompt: manifest.prompt, schema: manifest.schema })
       let a: Advice | null = null

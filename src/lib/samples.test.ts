@@ -98,9 +98,12 @@ describe('247 筆範例（sample-statement-1.csv）', () => {
   it('規則分類：各類別列數', () => {
     const by: Record<string, number> = {}
     for (const t of data) by[String(t.category)] = (by[String(t.category)] ?? 0) + 1
+    // 2026-11-21 找錯第 7 項：BRIGHTCALL WIRELESS 4 列由 Transfers 改為 Utilities（原為 Utilities 11、Transfers 14），其他列不變
     expect(by).toEqual({
-      Groceries: 35, Subscriptions: 19, Dining: 48, Delivery: 16, Health: 13, Utilities: 11, Income: 9,
-      Transport: 25, Shopping: 23, Housing: 3, Entertainment: 19, null: 5, Transfers: 14, Travel: 7,
+      Groceries: 35, Subscriptions: 19, Dining: 48, Delivery: 16, Health: 13, Utilities: 15, Income: 9,
+      Transport: 25, Shopping: 23, Housing: 3, Entertainment: 19, null: 5, Transfers: 10, Travel: 7,
     })
+    expect(data.filter((t) => /WIRELESS/.test(t.desc)).map((t) => [t.id, t.category])).toEqual([[81, 'Utilities'], [85, 'Utilities'], [143, 'Utilities'], [180, 'Utilities']])
+    expect(data.filter((t) => t.category === 'Transfers').every((t) => !/WIRELESS/.test(t.desc))).toBe(true)
   })
 })

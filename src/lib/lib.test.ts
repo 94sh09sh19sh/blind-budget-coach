@@ -38,6 +38,13 @@ describe('classifyByRules', () => {
   it('無法判斷回傳 null', () => {
     expect(classifyByRules('XYZZY QQQ')).toBeNull()
   })
+  it('WIRE 整字比對：電匯是轉帳，WIRELESS 是電信費', () => {
+    expect(classifyByRules('BRIGHTCALL WIRELESS AUSTIN TX')).toBe('Utilities')
+    expect(classifyByRules('POS PURCHASE BRIGHTCALL WIRELESS')).toBe('Utilities')
+    expect(classifyByRules('WIRE TRANSFER OUT REF 123')).toBe('Transfers')
+    expect(classifyByRules('INTL WIRE FEE')).toBe('Transfers')
+    expect(classifyByRules('OUTGOING WIRE')).toBe('Transfers')
+  })
 })
 
 describe('csv', () => {

@@ -45,6 +45,9 @@ describe('揭露文字', () => {
   it('off：沒有額外說明', () => {
     expect(appCheckDisclosure('off')).toBeNull()
   })
+  it('recaptcha：寫明權杖不在背景續期、過期後下一次送出才換（firebase.ts 的 isTokenAutoRefreshEnabled: false）', () => {
+    expect(appCheckDisclosure('recaptcha')!.text).toContain('The app sets App Check not to refresh that token in the background; when it has expired, the next send gets a new one the same way.')
+  })
   it('位元組說明：只算清單上的文字，不說是送出的全部', () => {
     for (const mode of ['recaptcha', 'debug', 'off'] as const) {
       const t = byteCountNote(mode)

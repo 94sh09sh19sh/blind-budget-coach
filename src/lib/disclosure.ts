@@ -31,6 +31,7 @@ export function appCheckDisclosure(mode: AppCheckMode): Disclosure | null {
         'To show Google that the request comes from this app, the page also uses Firebase App Check. ' +
         'The first time you send, it loads Google reCAPTCHA (scripts from www.google.com and www.gstatic.com). ' +
         'reCAPTCHA reads signals from your browser and device, and the result is exchanged for an App Check token at content-firebaseappcheck.googleapis.com. ' +
+        'The app sets App Check not to refresh that token in the background; when it has expired, the next send gets a new one the same way. ' +
         'The app does not give App Check or reCAPTCHA your statement, your transactions or any question text beyond what is listed above. ' +
         'What reCAPTCHA itself reads and sends is decided by Google’s script, so it cannot be listed here word for word. ' +
         'You can see these requests in DevTools → Network.',

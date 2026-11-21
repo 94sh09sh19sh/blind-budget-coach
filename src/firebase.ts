@@ -74,7 +74,13 @@ function setupAppCheck(app: FirebaseApp): void {
     })
   } else if (APP_CHECK_MODE === 'recaptcha' && siteKey) {
     // 這一步會載入 Google reCAPTCHA Enterprise 的指令碼；出境清單對話框與 README 都有如實說明（src/lib/disclosure.ts）。
-    initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(siteKey), isTokenAutoRefreshEnabled: true })
+    // isTokenAutoRefreshEnabled 設 false：權杖只在按 Send 那一刻需要時才換，背景不自己連線。
+    // 設 true 時，SDK 在初始化當下就掛監聽並啟動續期器，大約在權杖效期過半後自己再跑 reCAPTCHA、向
+    // content-firebaseappcheck.googleapis.com 換新權杖（使用者沒有按 Send、也沒有出境清單），失敗還會一再重試。
+    // 設 false 後，firebase/ai 每次送出請求前都會呼叫 App Check 的 getToken()：權杖還有效就用記憶體或 IndexedDB 裡的，
+    // 過期了才換新的，所以權杖過期後的第一次 Send 仍會先換到有效權杖再送出。
+    // 依據：@firebase/app-check 0.13.1 的 initializeAppCheck、initTokenRefresher、getToken$2，@firebase/ai 3.1.0 的 getHeaders。
+    initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(siteKey), isTokenAutoRefreshEnabled: false })
   }
   // 'off'：不啟用 App Check；專案若已強制 App Check，雲端呼叫會被拒並顯示錯誤。
 }

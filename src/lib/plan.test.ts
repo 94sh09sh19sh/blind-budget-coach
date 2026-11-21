@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { EXAMPLE_QUESTIONS, isoDate, matchByKeywords, patternToPlan, runPlan, validateChoice, validatePlan } from './plan'
-import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, validateAdvice } from './cloudtasks'
+import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, limitReached, validateAdvice } from './cloudtasks'
+import appSrc from '../App.tsx?raw'
 import type { Classified } from './aggregate'
 import type { CloudCall } from './ai'
 import type { TimelineEntry } from './router'
@@ -349,6 +350,23 @@ describe('askCloud', () => {
     expect(s.cloudCalls).toBe(10)
     expect(r.source).toBe('rules')
     expect(r.note).toMatch(/limit/)
+  })
+  it('上限的說明寫「每次載入頁面」；預算建議到上限也回同一句', async () => {
+    const cloud: CloudCall = async () => ({ text: GOOD, source: 'cloud' })
+    const { deps } = mkDeps({ cloud })
+    const s = new AskSession()
+    expect(limitReached(s)).toBe(false)
+    s.cloudCalls = MAX_CLOUD_CALLS
+    expect(limitReached(s)).toBe(true)
+    const r = await askCloud(s, deps, 'top categories please', m)
+    expect(r.note).toBe('Fixed pattern chosen by keywords. The limit of 10 cloud calls per page load was reached; using a fixed pattern.')
+    expect(await askAdvice(s, deps, buildAdviceManifest({ Groceries: 60, Dining: 40 }, 10))).toEqual({ ok: false, error: 'The limit of 10 cloud calls per page load was reached.' })
+  })
+  it('App.tsx：到上限時不開出境清單、預算建議按鈕停用並寫原因', () => {
+    expect(appSrc).toContain("if (cloudOk && !session.current.cache.has(AskSession.key(q)) && !atLimit) {")
+    expect(appSrc).toContain('disabled={!ready || !cloudOk || askBusy || limitHit} onClick={prepareAdvice}>Review what would be sent</button>')
+    expect(appSrc).toContain('{ready && cloudOk && limitHit && <p className="fine">{limitText}</p>}')
+    expect(appSrc).toContain("const limitText = `${cloudLimitReason(MAX_CLOUD_CALLS)}. Reloading the page starts a new count.`")
   })
   it('雲端一直沒回應：到等待上限就當作失敗，改用固定樣式，不重試', async () => {
     const cloud: CloudCall = () => new Promise(() => {})

@@ -77,7 +77,7 @@ export interface AskOutcome {
 
 export const MAX_CLOUD_CALLS = 10
 
-/** 每個瀏覽階段一個：同一問題快取、雲端呼叫上限。 */
+/** 每次載入頁面一個（重新整理或 Erase 都換新的）：同一問題快取、雲端呼叫上限。 */
 export class AskSession {
   cache = new Map<string, AskOutcome>()
   /** 固定樣式的結果另放一份：不能擋住出境清單（選了不送之後，同一題還要能改選送出） */
@@ -87,6 +87,12 @@ export class AskSession {
   constructor(maxCalls = MAX_CLOUD_CALLS) { this.maxCalls = maxCalls }
   static key(q: string) { return q.trim().toLowerCase().replace(/\s+/g, ' ') }
 }
+
+/** 雲端呼叫已到上限：不再開出境清單，改走本機固定樣式 */
+export const limitReached = (s: AskSession) => s.cloudCalls >= s.maxCalls
+
+/** 到上限時的說明（介面與時間線共用）。上限每次載入頁面歸零。 */
+export const cloudLimitReason = (max: number) => `The limit of ${max} cloud calls per page load was reached`
 
 export interface AskDeps {
   /** 沒有就視為雲端不可用 */
@@ -155,7 +161,7 @@ export async function askCloud(session: AskSession, deps: AskDeps, question: str
   if (!deps.cloud) return askFixed(session, deps, question, 'Cloud is not available; using a fixed pattern.')
   let why = ''
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (session.cloudCalls >= session.maxCalls) { why = `Session limit of ${session.maxCalls} cloud calls reached; using a fixed pattern.`; break }
+    if (limitReached(session)) { why = `${cloudLimitReason(session.maxCalls)}; using a fixed pattern.`; break }
     session.cloudCalls++
     const t0 = tm(deps)
     let side: Side = 'cloud'
@@ -257,7 +263,7 @@ export async function askAdvice(session: AskSession, deps: AskDeps, manifest: Ma
   if (!deps.cloud) return { ok: false, error: 'Cloud is not available.' }
   let last = ''
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (session.cloudCalls >= session.maxCalls) return { ok: false, error: `Session limit of ${session.maxCalls} cloud calls reached.` }
+    if (limitReached(session)) return { ok: false, error: `${cloudLimitReason(session.maxCalls)}.` }
     session.cloudCalls++
     const t0 = tm(deps)
     deps.beforeCloud?.(manifest)

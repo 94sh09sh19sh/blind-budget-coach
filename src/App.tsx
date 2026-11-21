@@ -12,7 +12,7 @@ import { ADVICE_DISCLAIMER, cspNote } from './lib/disclosure'
 import { createDeviceModel, firebaseCloudCall, type DeviceModel } from './lib/ai'
 import { EXAMPLE_QUESTIONS, PATTERN_SCHEMA, PATTERN_SYSTEM, runPlan, type PlanResult } from './lib/plan'
 import {
-  AskSession, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares,
+  AskSession, MAX_CLOUD_CALLS, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, cloudLimitReason, limitReached,
   type Advice, type AskDeps, type AskOutcome, type ColumnInfo, type Manifest,
 } from './lib/cloudtasks'
 import { applyOverrides, setOverride, type Overrides } from './lib/overrides'
@@ -80,6 +80,8 @@ export default function App() {
   const [answer, setAnswer] = useState<{ q: string; outcome: AskOutcome; result: PlanResult | null } | null>(null)
   const [advice, setAdvice] = useState<{ advice?: Advice; error?: string } | null>(null)
   const [askBusy, setAskBusy] = useState(false)
+  /** 畫面用：這次載入頁面已用掉的雲端呼叫次數（實際計數在 session.current） */
+  const [cloudUsed, setCloudUsed] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [lastClassifyMs, setLastClassifyMs] = useState<number | null>(null)
   /** 最近一次分類各由誰判了幾列；null 表示不適用（本機規則整批分類）或舊紀錄沒有 */
@@ -140,6 +142,9 @@ export default function App() {
   ]
   const cloudOk = CLOUD_CONFIGURED && online
   const cloudWhy = !CLOUD_CONFIGURED ? 'Cloud is not configured in this build.' : !online ? 'You are offline.' : ''
+  // 雲端呼叫到上限（每次載入頁面 10 次）：問答不再開出境清單、預算建議按鈕停用，並寫出原因
+  const limitHit = cloudUsed >= MAX_CLOUD_CALLS
+  const limitText = `${cloudLimitReason(MAX_CLOUD_CALLS)}. Reloading the page starts a new count.`
   const sentBytes = ledger.reduce((s, e) => s + e.bytes, 0)
   const hasData = txs.length > 0
   const ready = doneCount > 0
@@ -343,7 +348,7 @@ export default function App() {
   function clearTab(message: string) {
     epoch.current++
     setOverrides({}); setTimeline([]); setLedger([]); setCats(new Map()); setRestored([]); setCsv(null); setEngine(null); setProg(null)
-    setAnswer(null); setAdvice(null); setPending(null); setFileName(''); setIsRestored(false); setLoadErr(null); session.current = new AskSession()
+    setAnswer(null); setAdvice(null); setPending(null); setFileName(''); setIsRestored(false); setLoadErr(null); session.current = new AskSession(); setCloudUsed(0)
     setNote(message)
   }
   async function erase() {
@@ -389,11 +394,13 @@ export default function App() {
     setQuestion(q); setAnswer(null); setPending(null); setAskBusy(true)
     const ep = epoch.current
     try {
-      if (cloudOk && !session.current.cache.has(AskSession.key(q))) {
+      const atLimit = limitReached(session.current)
+      if (cloudOk && !session.current.cache.has(AskSession.key(q)) && !atLimit) {
         setPending({ kind: 'plan', question: q, manifest: buildPlanManifest(q, columns, today(), txs.length) })
       } else {
+        // 到上限時不開出境清單（按了 Send 也不會送），直接用固定樣式並寫明原因
         startPhase({ label: 'Picking a fixed query pattern on this device', where: 'device' })
-        const out = await askFixed(session.current, deps(), q, cloudWhy || 'Using a fixed pattern.')
+        const out = await askFixed(session.current, deps(), q, cloudWhy || (atLimit ? `${cloudLimitReason(session.current.maxCalls)}; using a fixed pattern.` : 'Using a fixed pattern.'))
         // 等待中別的分頁按了 Erase：不顯示用舊資料算出的答案
         if (epoch.current === ep) show(q, out)
       }
@@ -419,7 +426,7 @@ export default function App() {
         const r = await askAdvice(session.current, deps(), p.manifest)
         if (epoch.current === ep) setAdvice(r.ok ? { advice: r.advice } : { error: r.error })
       }
-    } finally { setAskBusy(false); setPhase(null); outbound.current = null; sentRow.current = null; setWaitingRow(null) }
+    } finally { setAskBusy(false); setPhase(null); outbound.current = null; sentRow.current = null; setWaitingRow(null); setCloudUsed(session.current.cloudCalls) }
   }
   function prepareAdvice() {
     setAdvice(null)
@@ -678,9 +685,9 @@ export default function App() {
               <button type="submit" className="btn btn-primary" disabled={!ready || askBusy || !question.trim()}>Ask</button>
             </form>
             <p className="fine">
-              {cloudOk
+              {cloudOk && !limitHit
                 ? 'Before a cloud request is made, the outbound gate lists its exact text. Declining uses a fixed pattern picked on this device.'
-                : `${cloudWhy} Questions use fixed patterns (on-device model if available, otherwise keywords).`}
+                : `${cloudWhy || limitText} Questions use fixed patterns (on-device model if available, otherwise keywords).`}
             </p>
             {askBusy && phase && !phase.label.includes('budget advice') && (
               <div className={`progress ${phase.where === 'cloud' ? 'progress-cloud' : ''}`} role="status" aria-live="polite">
@@ -797,8 +804,9 @@ export default function App() {
             <h3 id="advice-title" className="card-title">Budget advice</h3>
             <p className="fine">The text sent is whole-number category percentages. It has no transactions, merchants, dates or amounts.</p>
             <p className="fine advice-note">{ADVICE_DISCLAIMER}</p>
-            <button className="btn btn-cloud" disabled={!ready || !cloudOk || askBusy} onClick={prepareAdvice}>Review what would be sent</button>
+            <button className="btn btn-cloud" disabled={!ready || !cloudOk || askBusy || limitHit} onClick={prepareAdvice}>Review what would be sent</button>
             {!ready && <p className="fine">Classify a statement first.</p>}
+            {ready && cloudOk && limitHit && <p className="fine">{limitText}</p>}
             {askBusy && phase && phase.label.includes('budget advice') && (
               <div className="progress progress-cloud" role="status" aria-live="polite">
                 <div className="progress-head"><span className="pulse" aria-hidden="true" /><b>Waiting for the cloud</b><span className="mono progress-time">{elapsed} s</span></div>

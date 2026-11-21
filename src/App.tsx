@@ -12,7 +12,7 @@ import { ADVICE_DISCLAIMER, cspNote } from './lib/disclosure'
 import { createDeviceModel, firebaseCloudCall, type DeviceModel } from './lib/ai'
 import { EXAMPLE_QUESTIONS, PATTERN_SCHEMA, PATTERN_SYSTEM, runPlan, type PlanResult } from './lib/plan'
 import {
-  AskSession, MAX_CLOUD_CALLS, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, cloudLimitReason, limitReached,
+  AskSession, MAX_CLOUD_CALLS, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, cloudLimitReason, limitReached, localDate,
   type Advice, type AskDeps, type AskOutcome, type ColumnInfo, type Manifest,
 } from './lib/cloudtasks'
 import { applyOverrides, setOverride, type Overrides } from './lib/overrides'
@@ -33,7 +33,8 @@ type Pending = { kind: 'plan'; question: string; manifest: Manifest } | { kind: 
 type Phase = { label: string; detail?: string; start: number; where: 'device' | 'cloud' }
 type ClassifyProgress = { done: number; total: number; keys: string[]; batch: number; last?: { key: string; category: Category | null } }
 
-const today = () => new Date().toISOString().slice(0, 10)
+// 使用者所在時區的今天（原本用 UTC：美西傍晚會送出隔天的日期，月底時 this month／last month 差一個月）
+const today = () => localDate(new Date())
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const plural = (n: number, w: string) => `${n.toLocaleString('en-US')} ${w}${n === 1 ? '' : 's'}`
 /** 本機規則 0 列命中時接在規則摘要後面（例如說明欄選錯，內容全是 DEBIT／CREDIT）；欄位對應只在剛載入的檔案才有 */
@@ -192,6 +193,15 @@ export default function App() {
     setModelChoice(null)
     setCsv(p); setRestored([]); setCols(guessed); setSignSel('auto'); setLevel(lvl); setFileName(name); setIsRestored(false)
     setCats(new Map()); setEngine(null); setNote(''); setAnswer(null); setAdvice(null); setPending(null); setProg(null); setLastClassifyMs(null); setRunCounts(null)
+  }
+  /**
+   * 改欄位對應。說明或金額欄一換，被略過的列可能不同，交易 id 會依讀到的順序重編，
+   * 先前的類別（依 id 存）就會對到別的列：這時清掉類別，請使用者重新分類。只換日期欄時 id 不變，類別保留。
+   */
+  function changeCols(next: ColumnMap) {
+    const same = next.description === cols.description && next.amount === cols.amount && next.debit === cols.debit && next.credit === cols.credit
+    setCols(next)
+    if (!same) { setCats(new Map()); setEngine(null); setRunCounts(null); setAnswer(null); setNote('') }
   }
   async function loadSample(file: string) {
     const r = await fetch(`${import.meta.env.BASE_URL}samples/${file}`)
@@ -531,7 +541,7 @@ export default function App() {
                   <div className="columns-grid">
                     {(['date', 'description'] as const).map((k) => (
                       <label key={k} className="field"><span>{k === 'date' ? 'Date' : 'Description'}</span>
-                        <select value={cols[k]} onChange={(e) => setCols({ ...cols, [k]: e.target.value })}>
+                        <select value={cols[k]} onChange={(e) => changeCols({ ...cols, [k]: e.target.value })}>
                           <option value="">(none)</option>
                           {csv.headers.map((h) => <option key={h}>{h}</option>)}
                         </select>
@@ -539,13 +549,13 @@ export default function App() {
                     ))}
                     {isSplit(cols) ? (['debit', 'credit'] as const).map((k) => (
                       <label key={k} className="field"><span>{k === 'debit' ? 'Debit' : 'Credit'}</span>
-                        <select value={cols[k]} onChange={(e) => setCols({ ...cols, [k]: e.target.value })}>
+                        <select value={cols[k]} onChange={(e) => changeCols({ ...cols, [k]: e.target.value })}>
                           {csv.headers.map((h) => <option key={h}>{h}</option>)}
                         </select>
                       </label>
                     )) : (
                       <label className="field"><span>Amount</span>
-                        <select value={cols.amount} onChange={(e) => setCols({ ...cols, amount: e.target.value })}>
+                        <select value={cols.amount} onChange={(e) => changeCols({ ...cols, amount: e.target.value })}>
                           <option value="">(none)</option>
                           {csv.headers.map((h) => <option key={h}>{h}</option>)}
                         </select>
@@ -561,8 +571,8 @@ export default function App() {
                       </label>
                     )}
                     {isSplit(cols)
-                      ? <button className="btn btn-quiet" onClick={() => setCols({ ...cols, debit: '', credit: '' })}>Use a single amount column</button>
-                      : <button className="btn btn-quiet" disabled={csv.headers.length < 4} onClick={() => { const g = guessColumns(csv.headers); setCols({ ...cols, debit: g.debit || csv.headers[0], credit: g.credit || csv.headers[1] }) }}>Use Debit / Credit columns</button>}
+                      ? <button className="btn btn-quiet" onClick={() => changeCols({ ...cols, debit: '', credit: '' })}>Use a single amount column</button>
+                      : <button className="btn btn-quiet" disabled={csv.headers.length < 4} onClick={() => { const g = guessColumns(csv.headers); changeCols({ ...cols, debit: g.debit || csv.headers[0], credit: g.credit || csv.headers[1] }) }}>Use Debit / Credit columns</button>}
                   </div>
                 </details>
               )}

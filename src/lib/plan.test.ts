@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EXAMPLE_QUESTIONS, isoDate, matchByKeywords, patternToPlan, runPlan, validateChoice, validatePlan } from './plan'
-import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, limitReached, validateAdvice } from './cloudtasks'
+import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, limitReached, localDate, validateAdvice } from './cloudtasks'
 import appSrc from '../App.tsx?raw'
 import type { Classified } from './aggregate'
 import type { CloudCall } from './ai'
@@ -187,6 +187,16 @@ describe('雲端錯誤說明', () => {
     expect(describeCloudError(new Error('429 RESOURCE_EXHAUSTED key=SECRET'))).toBe('the free daily or per-minute limit was reached')
     expect(describeCloudError(new Error('App Check token invalid (403)'))).toContain('App Check')
     expect(describeCloudError(new Error('weird SECRET text'))).toBe('an unexpected error')
+  })
+  it('SDK 的 HTTP 錯誤依狀態碼分開，不一律說成網路失敗', () => {
+    const sdk = (status: string, msg: string) => new Error(`Error fetching from https://firebasevertexai.googleapis.com/v1beta/projects/p/models/m:generateContent: [${status}] ${msg}`)
+    expect(describeCloudError(sdk('503 Service Unavailable', 'The model is overloaded.'))).toBe('the cloud service returned a server error')
+    expect(describeCloudError(sdk('500 Internal Server Error', 'x'))).toBe('the cloud service returned a server error')
+    expect(describeCloudError(sdk('400 Bad Request', 'Invalid JSON payload'))).toBe('the cloud service rejected the request as invalid')
+    expect(describeCloudError(sdk('429 Too Many Requests', 'quota'))).toBe('the free daily or per-minute limit was reached')
+    expect(describeCloudError(sdk('403 Forbidden', 'App Check token is invalid'))).toBe('the request was refused (App Check or API key problem)')
+    expect(describeCloudError(sdk('400 Bad Request', 'API key not valid'))).toBe('the request was refused (App Check or API key problem)')
+    expect(describeCloudError(new TypeError('Failed to fetch'))).toBe('the network request failed')
   })
   it('失敗時使用者看到的訊息不含原始字串', async () => {
     const cloud: CloudCall = async () => { throw new Error('403 key=SECRET') }
@@ -439,5 +449,27 @@ describe('雲端設定判斷', () => {
   it('佔位設定下真的雲端呼叫直接丟錯，不送請求', async () => {
     expect(CLOUD_CONFIGURED).toBe(false)
     await expect(firebaseCloudCall({ mode: 'ONLY_IN_CLOUD', system: 's', prompt: 'p', schema: {} })).rejects.toThrow(/not configured/)
+  })
+})
+
+describe('出境清單的 Today: 日期（小問題：原本用 UTC）', () => {
+  it('localDate 用使用者所在時區的年月日', () => {
+    expect(localDate(new Date(2026, 0, 3, 0, 5))).toBe('2026-01-03')
+    expect(localDate(new Date(2026, 11, 31, 23, 59))).toBe('2026-12-31')
+  })
+  it('App.tsx 的 today() 用 localDate，不用 toISOString', () => {
+    expect(appSrc).toContain('const today = () => localDate(new Date())')
+    expect(appSrc).not.toContain('toISOString().slice(0, 10)')
+  })
+})
+
+describe('改欄位對應後清掉類別（小問題）', () => {
+  it('Columns 的選單與按鈕都經 changeCols；說明或金額欄一換就清掉類別', () => {
+    const cols = appSrc.slice(appSrc.indexOf('<details className="columns">'), appSrc.indexOf('</details>', appSrc.indexOf('<details className="columns">')))
+    expect(cols).not.toContain('setCols(')
+    expect(cols.match(/changeCols\(/g)?.length).toBe(5)
+    const f = appSrc.slice(appSrc.indexOf('function changeCols('), appSrc.indexOf('async function loadSample('))
+    expect(f).toContain('next.description === cols.description && next.amount === cols.amount && next.debit === cols.debit && next.credit === cols.credit')
+    expect(f).toContain('if (!same) { setCats(new Map())')
   })
 })

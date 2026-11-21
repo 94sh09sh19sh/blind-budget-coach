@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { appCheckDisclosure, appCheckMode, byteCountNote, cspNote } from './disclosure'
 import { buildAdviceManifest, buildPlanManifest } from './cloudtasks'
-import { ManifestDialog, QUESTION_AS_TYPED } from '../ui/ManifestDialog'
+import { ManifestDialog, QUESTION_AS_TYPED, SCHEMA_FORMAT_NOTE } from '../ui/ManifestDialog'
 
 describe('App Check 方式的判斷（與 firebase.ts 共用）', () => {
   it('有網站金鑰的正式建置是 recaptcha，不會是 debug', () => {
@@ -108,6 +108,10 @@ describe('出境清單對話框的輸出', () => {
     expect(h).toContain('OAKWOOD APARTMENTS')
     expect(h).toContain('Your question is sent as you typed it, including any merchant names, dates or amounts in it.')
     expect(QUESTION_AS_TYPED).not.toMatch(/\bnever\b|guarantee/i)
+  })
+  it('回應結構：說明顯示有縮排、實際送出是緊湊的 JSON（位元組數也是）', () => {
+    expect(html('recaptcha')).toContain(SCHEMA_FORMAT_NOTE)
+    expect(m.bytes).toBe(new TextEncoder().encode(m.system + m.prompt + JSON.stringify(m.schema)).length)
   })
   it('預算建議：沒有問題文字，不加這一句', () => {
     const a = buildAdviceManifest({ Groceries: 60, Dining: 40 }, 60)

@@ -15,6 +15,8 @@ if (typeof document !== 'undefined') {
 
 /** 問答的出境清單加的一句：問題原樣送出 */
 export const QUESTION_AS_TYPED = 'Your question is sent as you typed it, including any merchant names, dates or amounts in it.'
+/** 回應結構的顯示格式說明 */
+export const SCHEMA_FORMAT_NOTE = 'Shown indented for reading. It is sent as compact JSON (no line breaks or indentation), which is what the byte count measures.'
 
 export function ManifestDialog({ m, onSend, onCancel, cancelText, appCheck }: { m: Manifest; onSend: () => void; onCancel: () => void; cancelText: string; appCheck: AppCheckMode }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -64,6 +66,8 @@ export function ManifestDialog({ m, onSend, onCancel, cancelText, appCheck }: { 
           <details className="gd-schema">
             <summary>Response structure sent with the request</summary>
             <pre className="gd-pre" tabIndex={0}>{JSON.stringify(m.schema, null, 1)}</pre>
+            {/* 顯示時有縮排，實際送出與位元組數都是緊湊的 JSON（ai.ts 的 requestBytes）：內容相同、只差空白 */}
+            <p className="fine">{SCHEMA_FORMAT_NOTE}</p>
           </details>
         </section>
         <section className="gd-keep" aria-label="Data that stays on this device">

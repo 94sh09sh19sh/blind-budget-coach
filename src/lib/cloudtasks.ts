@@ -25,6 +25,9 @@ export function describeCloudError(e: unknown): string {
   if (/app.?check|appcheck|401|403|permission|unauthenticated|api.?key/i.test(m)) return 'the request was refused (App Check or API key problem)'
   if (/404|not found/i.test(m)) return 'the model was not found'
   if (/timed out/i.test(m)) return 'no response within the time limit'
+  // SDK 的 HTTP 錯誤訊息開頭一律是「Error fetching from <網址>: [狀態碼 …]」，要先看狀態碼，不然都會被下一行的 fetch 判成網路失敗
+  if (/\[5\d\d\b/.test(m)) return 'the cloud service returned a server error'
+  if (/\[400\b/.test(m)) return 'the cloud service rejected the request as invalid'
   if (/network|fetch|offline|failed to load|timeout/i.test(m)) return 'the network request failed'
   return 'an unexpected error'
 }
@@ -45,6 +48,11 @@ Plan fields (all optional except aggregate):
 Use only these fields. Resolve relative dates such as "last month" using the given today's date.
 If the question cannot be answered exactly with these fields (for example comparing two periods, percentage changes, forecasts, or anything that needs more than one query), do not approximate it with a different query. Return only {"unsupportedReason": "<one short sentence>"}.
 If the question can be answered with these fields, return only the plan and leave out unsupportedReason entirely. Do not combine unsupportedReason with plan fields.`
+
+/** 出境清單的 Today: 用的日期：使用者所在時區的 YYYY-MM-DD（不用 toISOString，那是 UTC 日期） */
+export function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export function buildPlanManifest(question: string, columns: ColumnInfo[], today: string, txCount: number): Manifest {
   const prompt = [

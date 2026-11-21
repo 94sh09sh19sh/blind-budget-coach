@@ -29,10 +29,10 @@ Classification is hard-wired to `ONLY_ON_DEVICE`, and `src/lib/ai.ts` is the onl
 |---|---|---|---|
 | Classify your transactions (except payroll-deposit wording, which a local rule decides) | No network request is made by the page | `ONLY_ON_DEVICE` | Local keyword rules |
 | Pick a fixed query pattern (you declined to send, offline, or cloud not configured) | No network request is made by the page | `ONLY_ON_DEVICE` | Keyword matching |
-| Blind analysis | Instructions, today's date, column names and types, the category list, your question, the response structure | `PREFER_IN_CLOUD` | A fixed query pattern, chosen on device or by keywords |
+| Blind analysis | Instructions, today's date, column names and types, the category list, your question, the response structure | `PREFER_IN_CLOUD` | A fixed query pattern, chosen on device or by keywords. If the cloud call fails and the on-device model is downloaded, the SDK can let that model write the plan instead; the timeline marks that row Device and the ledger still lists the request |
 | Budget advice | Instructions, whole-number percentages per category, the response structure | `ONLY_IN_CLOUD` | Disabled; the reason is shown |
 
-Your question is free text, so anything you type into it is sent if you approve. Read the dialog first.
+Your question is free text, so anything you type into it is sent if you approve. Read the dialog first; for a question it says that the question is sent as you typed it.
 
 Budget advice is general. It is based on your spending shares and is not investment, tax or personal financial advice. The page says so next to the Budget advice button.
 
@@ -40,13 +40,14 @@ The cloud is treated as not configured until all six Firebase settings are fille
 
 ## What the page shows you
 
-- Outbound gate: before every cloud request, a dialog lists the exact text that will be sent (instructions, message, response structure) and its size in bytes, next to a list of what is not included. The default focus is "Don't send", and Esc means the same. The byte count covers only the text listed in the dialog; the request itself is larger (headers, JSON wrapping). The dialog also carries a fixed note about traffic that is not part of the listed text: in a production build with a reCAPTCHA site key, the first send loads Google reCAPTCHA through Firebase App Check (see "App Check and reCAPTCHA" below). A development build with a debug token shows a shorter note instead (only an App Check token request, no reCAPTCHA).
-- Outbound ledger: every request you approved is listed with the text that was sent. The "bytes sent" counter at the top is the sum of the ledger since the last erase. Like the dialog, it counts only the listed text, not HTTP headers, JSON wrapping or App Check and reCAPTCHA traffic.
+- Outbound gate: before every cloud request, a dialog lists the exact text that will be sent (instructions, message, response structure) and its size in bytes, next to a list of what is not included. For a question, it adds that the question is sent as you typed it, including any merchant names, dates or amounts in it. The response structure is shown indented; it is sent as compact JSON, which is what the byte count measures. The default focus is "Don't send", and Esc means the same. The byte count covers only the text listed in the dialog; the request itself is larger (headers, JSON wrapping). The dialog also carries a fixed note about traffic that is not part of the listed text: in a production build with a reCAPTCHA site key, the first send loads Google reCAPTCHA through Firebase App Check (see "App Check and reCAPTCHA" below). A development build with a debug token shows a shorter note instead (only an App Check token request, no reCAPTCHA).
+- Outbound ledger: every request you approved is listed with the text that was sent. A row is written when you press Send, before the request goes out, and gets its result when the answer comes back. So a request that fails, or one still waiting when the page is closed or reloaded, stays listed (the latter as "No answer was recorded"). A request whose cloud call failed and that the on-device model answered instead is listed too. The "bytes sent" counter at the top is the sum of the ledger since the last erase. Like the dialog, it counts only the listed text, not HTTP headers, JSON wrapping or App Check and reCAPTCHA traffic.
 - Network allow-list: the cloud column states which hosts the browser lets this page connect to, read from the same source as the policy itself (see "Network allow-list (Content-Security-Policy)" below). In a development build, where no policy is applied, it says so.
 - Timeline: every model call and rule run, with the side it ran on (Device, Cloud or Rules), the mode, the duration and the reason. A row decided by the payroll-deposit rule is marked Rules, and the summary under the statement counts it separately from the rows the model classified.
 - A route line under the statement names the mode in use and why. The "How each task is routed" panel lists all four paths.
 - Corrections: pick another category for any row. The correction applies to every row with the same cleaned merchant string and is reused next time.
-- "Erase all local data" clears corrections, timeline, ledger and the last statement (IndexedDB).
+- "Erase all local data" clears corrections, timeline, ledger and the last statement (IndexedDB). Other open tabs of the app are told to clear what they show as well, through the browser's `BroadcastChannel` (a message between tabs of the same site in the same browser, not a network request). Erase and the buttons that load a statement are disabled while rows are being classified or a cloud answer is pending.
+- Loading your own CSV: if no transaction can be read, the statement on screen is kept and a message names the file, the number of rows, the column names found and the three columns the app needs (date, description, amount). If some rows or dates cannot be read, a note says how many. The statement card shows the date range of the data, computed in the page. When an answer has no matching rows and the plan has a date filter, the page shows that range next to the plan's dates.
 
 ## Verify it yourself
 
@@ -144,6 +145,8 @@ npm run preview
 - `src/firebase.ts`: settings from `VITE_` variables, App Check.
 - `src/csp.ts`: the Content-Security-Policy and its host allow-list, defined once. `vite-plugin-csp.ts` injects it into `index.html` at build time; `firebase.json` carries the same policy as a response header.
 - `src/lib/disclosure.ts`: the fixed notes about App Check, reCAPTCHA, byte counts and the policy.
+- `src/lib/loadcheck.ts`: the messages for CSV rows that cannot be read, and the date range of the data (shown in the page only).
+- `src/lib/store.ts`, `src/lib/erasechannel.ts`: local storage in IndexedDB, and the Erase notice to other tabs.
 - `src/ui/`: outbound gate dialog and icons. All icons are drawn in this repository.
 - `public/samples/`: two synthetic statements (60 and 247 rows) with fictional merchants.
 
@@ -176,8 +179,17 @@ Tested on the public URL in a separate Chrome 157 test profile on Windows 11 tha
 Covered by unit tests only:
 
 - Debit and Credit split columns and the automatic sign guess (also tried on synthetic files).
-- The 45 s cloud timeout, the cap of 10 cloud calls per session, and the retry-then-fallback logic for invalid plans (invalid-plan rejection is covered by 21 cases). The retry-then-fallback path was also seen once on the public URL with an earlier build, as described above; the timeout and the cap were not.
+- The 45 s cloud timeout, the cap of 10 cloud calls per page load, and the retry-then-fallback logic for invalid plans (invalid-plan rejection is covered by 21 cases). The retry-then-fallback path was also seen once on the public URL with an earlier build, as described above; the timeout and the cap were not.
 - Batched classification (several merchants per call), which exists in the code but is switched off.
+- The changes made on 2026-11-21, after the browser tests above. They have unit tests and were not run in a browser:
+  - Reading your own CSV: the message when no transaction can be read (the statement on screen is kept), the note for unreadable rows and dates, the description column preferred over a "Details" column, a summary block above the header line skipped, amounts with the minus sign in another place (`$-12.34`, `12.34-`), `M/D/YY` dates, and decimal commas and day-first dates reported as unreadable instead of being misread. The date range on the statement card and the note for an answer with no matching rows.
+  - Questions about income or transfers: a plan or fixed pattern that names Income or Transfers now counts those rows (60-row sample with local rules: income 4,577.49, transfers 1,366.32).
+  - The local rule for wire transfers matches the whole word `WIRE`, so `WIRELESS` is a utility. In the 247-row sample, the four `BRIGHTCALL WIRELESS` rows moved from Transfers to Utilities; the 60-row sample is unchanged (56 of 60 rows categorized by the rules).
+  - Ledger rows written before sending, and rows for requests that the on-device model answered after the cloud call failed.
+  - Erase: the buttons disabled while work is running, and the notice to other tabs through `BroadcastChannel` (tested between two channels in Node, not between two browser tabs).
+  - The cap of 10 cloud calls: after it, no outbound gate opens and Budget advice is disabled, with the reason shown.
+  - App Check token refresh only when sending (the installed SDK with a stub token provider and a stubbed `fetch`).
+  - The 5 s limit on `LanguageModel.availability()`, the 60 s limit on the on-device fixed-pattern call, and the waiting text after choosing to download the model.
 
 Not tested:
 
@@ -191,9 +203,10 @@ Not tested:
 - Accuracy. On two synthetic evaluation sets of 300 rows each (about 134 distinct strings each), one-by-one classification scored 95.0% and 94.3%. The sets and the script are not part of this repository. These figures were measured before the payroll-deposit rule was added. A check by eye on the 60-row sample earlier found one wrong row out of 60: a payroll deposit read as a transfer. A local rule now handles payroll-deposit wording. It was written after seeing that miss, so the sample is no longer an independent test. The rule looks at the wording only, not the sign of the amount, and covers `PAYROLL`, `DIRECT DEP`, `DIRECT DEPOSIT`, `SALARY` and `PAYCHECK`. Unknown merchants can be wrong; correct them in the table.
 - Fixed patterns. Without the cloud, a question maps to one of six fixed patterns: top categories, spending per month, top merchants, total in one category or at one named merchant, average purchase in one category, and count of purchases above an amount. Anything else answers "no result" and suggests an example question. With the cloud, a question that cannot be answered exactly with the plan fields (for example comparing two periods) is reported as out of scope instead of being approximated.
 - Batched classification (several merchants per call) was measured and left off. With five merchants per call it was 2.2 to 3.5 times faster on the two sets but lost 0.7 to 3.0 points of accuracy, so one merchant per call stays the default (`DEFAULT_BATCH_SIZE` in `src/lib/ondevice.ts`).
-- Cloud limits. The free tier has rate limits. The app allows 10 cloud calls per browsing session and waits at most 45 seconds for each. After a timeout the SDK call may still be running in the background, and its result is discarded. The "bytes sent" counter counts a failed request too, because it may have been sent. Byte counts are the UTF-8 length of the text listed in the dialog (instructions, message and response structure). They omit HTTP headers, JSON wrapping and App Check and reCAPTCHA traffic, so the requests in the Network panel are larger.
+- Cloud limits. The free tier has rate limits. The app allows 10 cloud calls per page load (a reload or Erase starts a new count) and waits at most 45 seconds for each. After the 10th call, questions are answered by fixed patterns without opening the outbound gate, and Budget advice is disabled, with the reason shown. After a timeout the SDK call may still be running in the background, and its result is discarded. The "bytes sent" counter counts a failed request too, and one the page was closed or reloaded before answering, because it may have been sent. Byte counts are the UTF-8 length of the text listed in the dialog (instructions, message and response structure). They omit HTTP headers, JSON wrapping and App Check and reCAPTCHA traffic, so the requests in the Network panel are larger.
 - Local storage. The last statement, corrections, timeline and ledger are kept unencrypted in IndexedDB until you erase them. "Erase all local data" clears those four. The Firebase SDK also keeps its own records in IndexedDB, and Erase does not clear them: an App Check token (`firebase-app-check-database`, created by the first approved send) and a heartbeat record (`firebase-heartbeat-database`). They do not contain your statement. Observed in Chrome 157 on the public URL.
-- Your own CSV files. Column guessing and the sign guess were checked on synthetic files only.
+- Your own CSV files. Column guessing and the sign guess were checked on synthetic files only, not on real bank exports. The file needs a header line (a short summary block above it is skipped). Amounts such as `-12.34`, `(12.34)`, `$-12.34` and `12.34-` and dates in `YYYY-MM-DD`, `M/D/YYYY` and `M/D/YY` are read. Decimal commas (`12,34`), day-first dates (`25/01/2026`) and month names are not; rows with an unreadable amount are skipped, and the page says how many rows and dates it could not read.
+- Several tabs. Erase in one tab clears the others. Otherwise each tab keeps its own copy: the ledger keeps rows from tabs used at the same time, but the timeline, corrections and last statement are saved as a whole by each tab, so the tab that saves last wins.
 - Language. English descriptions only.
 
 ## License

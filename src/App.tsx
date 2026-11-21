@@ -24,6 +24,7 @@ import { ManifestDialog } from './ui/ManifestDialog'
 import { ModelChoice } from './ui/ModelChoice'
 import { canUseModelNow, decideClassifyPath, RULES_CHOSEN_REASON } from './lib/modelchoice'
 import { dataPeriod, emptyAnswerNote, loadError, loadWarning } from './lib/loadcheck'
+import { ERASED_ELSEWHERE, openEraseChannel, type EraseChannel } from './lib/erasechannel'
 import { IconAlert, IconCheck, IconCloud, IconDevice, IconGate, IconRules, IconUpload, Logo } from './ui/icons'
 
 type Engine = 'device' | 'rules' | null
@@ -92,6 +93,9 @@ export default function App() {
   const sentRow = useRef<{ id: number; at: number } | null>(null)
   /** 畫面用：正在等答案的帳本列 id（null 表示沒有在等） */
   const [waitingRow, setWaitingRow] = useState<number | null>(null)
+  /** 每次清除（本分頁或別的分頁按 Erase）加一；進行中的工作回來時若已變，就不寫回、不顯示 */
+  const epoch = useRef(0)
+  const eraseChan = useRef<EraseChannel | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const classifyBtn = useRef<HTMLButtonElement>(null)
   const wasBusy = useRef(false)
@@ -246,8 +250,12 @@ export default function App() {
     setBusy(true)
     const t0 = Date.now()
     let asked = false
+    // 分類途中別的分頁按了 Erase：不再寫回畫面與 IndexedDB（本分頁的 Erase 在分類中是停用的）
+    const ep = epoch.current
+    const erased = () => epoch.current !== ep
     try {
       const a = await checkAvailability(); setAvail(a)
+      if (erased()) return
       const path = decideClassifyPath(a, approvedDownload)
       if (path === 'ask') {
         // 還沒清掉先前的分類結果；等使用者選了才動
@@ -266,6 +274,7 @@ export default function App() {
         const bm = batchN > 1 ? createBatchClassifier((p) => setDl(p)) : null
         const total = new Set(txs.map((t) => normalizeDesc(t.desc))).size
         if (bm) await bm.warm([batchN, total % batchN].filter((n) => n > 1))
+        if (erased()) return
         setDl(null); setAvail('available'); setEngine('device')
         setProg({ done: 0, total, keys: [], batch: batchN })
         startPhase({ label: 'Classifying on this device', where: 'device' })
@@ -275,6 +284,8 @@ export default function App() {
         // 這次分類各由誰判了幾列（只算有結果的列）：模型、確定性規則、使用者先前存的更正
         const counts: RunCounts = { model: 0, rule: 0, corrected: 0 }
         await classifyAll(model.generate, txs.map((t) => t.desc), (e) => {
+          // 已清除：丟錯讓 classifyAll 停下（catch 裡同樣判斷，不會改跑本機規則）
+          if (erased()) throw new Error('erased in another tab')
           setCats((prev) => {
             const n = new Map(prev)
             for (const ds of e.descs) for (const id of idsByDesc.get(ds) ?? []) n.set(id, e.category)
@@ -294,6 +305,7 @@ export default function App() {
             if (e.batch.first) log({ task: `classify batch of ${e.batch.size} merchants`, mode: 'ONLY_ON_DEVICE', side, ms: e.batch.ms, bytesSent: 0, reason: d.reason })
           } else log({ task: `classify "${e.key}"${e.batch ? ' (batch fell back to one by one)' : ''}`, mode: 'ONLY_ON_DEVICE', side, ms: e.ms, bytesSent: 0, reason: d.reason })
         }, ovMap, { batchSize: batchN, genBatch: bm?.generate })
+        if (erased()) return
         setRunCounts(counts)
         setCats((prev) => { persist(prev, counts); return prev })
       } else {
@@ -304,6 +316,7 @@ export default function App() {
       }
     } catch (err) {
       setDl(null)
+      if (erased()) return
       runRules('On-device model failed to start; fell back to local rules.', overrides)
       console.error('On-device model failed to start', err)
       setNote('The on-device model could not start on this browser or machine; used local keyword rules instead.')
@@ -326,12 +339,25 @@ export default function App() {
     setNote(`Saved: "${normalizeDesc(t.desc)}" is now ${cat} (${plural(r.affected, 'row')}). It will be reused next time.`)
   }
 
-  async function erase() {
-    await eraseAll()
+  /** 清掉這個分頁記憶體裡的資料（IndexedDB 由 eraseAll 清）；進行中的分類與問答回來後不再寫回 */
+  function clearTab(message: string) {
+    epoch.current++
     setOverrides({}); setTimeline([]); setLedger([]); setCats(new Map()); setRestored([]); setCsv(null); setEngine(null); setProg(null)
     setAnswer(null); setAdvice(null); setPending(null); setFileName(''); setIsRestored(false); setLoadErr(null); session.current = new AskSession()
-    setNote('All local data erased: corrections, timeline, outbound ledger and last statement.')
+    setNote(message)
   }
+  async function erase() {
+    await eraseAll()
+    clearTab('All local data erased: corrections, timeline, outbound ledger and last statement.')
+    // 通知同源的其他分頁也清掉（BroadcastChannel，不經網路）
+    eraseChan.current?.notify()
+  }
+  // 別的分頁按了 Erase：這個分頁也清掉畫面上的資料，之後的寫入才不會把舊資料寫回 IndexedDB
+  useEffect(() => {
+    const c = openEraseChannel(() => clearTab(ERASED_ELSEWHERE))
+    eraseChan.current = c
+    return () => { c.close(); eraseChan.current = null }
+  }, [])
 
   // ---- 盲眼分析 ----
   function deps(): AskDeps {
@@ -361,12 +387,15 @@ export default function App() {
     const q = q0.trim()
     if (!q || doneCount === 0) return
     setQuestion(q); setAnswer(null); setPending(null); setAskBusy(true)
+    const ep = epoch.current
     try {
       if (cloudOk && !session.current.cache.has(AskSession.key(q))) {
         setPending({ kind: 'plan', question: q, manifest: buildPlanManifest(q, columns, today(), txs.length) })
       } else {
         startPhase({ label: 'Picking a fixed query pattern on this device', where: 'device' })
-        show(q, await askFixed(session.current, deps(), q, cloudWhy || 'Using a fixed pattern.'))
+        const out = await askFixed(session.current, deps(), q, cloudWhy || 'Using a fixed pattern.')
+        // 等待中別的分頁按了 Erase：不顯示用舊資料算出的答案
+        if (epoch.current === ep) show(q, out)
       }
     } finally { setAskBusy(false); setPhase(null) }
   }
@@ -375,17 +404,20 @@ export default function App() {
     if (!p) return
     setPending(null); setAskBusy(true)
     outbound.current = sendIt ? p.manifest : null
+    const ep = epoch.current
     try {
       if (p.kind === 'plan') {
         startPhase(sendIt
           ? { label: 'Waiting for the cloud to write a query plan', detail: 'Usually 2–12 s; gives up after 45 s. The request is the text you approved in the dialog.', where: 'cloud' }
           : { label: 'Picking a fixed query pattern on this device', where: 'device' })
         const d = deps()
-        show(p.question, sendIt ? await askCloud(session.current, d, p.question, p.manifest) : await askFixed(session.current, d, p.question, 'You chose not to send anything; using a fixed pattern.'))
+        const out = sendIt ? await askCloud(session.current, d, p.question, p.manifest) : await askFixed(session.current, d, p.question, 'You chose not to send anything; using a fixed pattern.')
+        // 等待中別的分頁按了 Erase：不顯示用舊資料算出的答案
+        if (epoch.current === ep) show(p.question, out)
       } else if (sendIt) {
         startPhase({ label: 'Waiting for budget advice from the cloud', detail: 'Usually 2–12 s; gives up after 45 s.', where: 'cloud' })
         const r = await askAdvice(session.current, deps(), p.manifest)
-        setAdvice(r.ok ? { advice: r.advice } : { error: r.error })
+        if (epoch.current === ep) setAdvice(r.ok ? { advice: r.advice } : { error: r.error })
       }
     } finally { setAskBusy(false); setPhase(null); outbound.current = null; sentRow.current = null; setWaitingRow(null) }
   }
@@ -455,12 +487,14 @@ export default function App() {
                 <li><span className="step-n">3</span><div><b>Ask a question</b><span>A question goes to the cloud only after you approve its exact text at the gate.</span></div></li>
               </ol>
               <div className="empty-actions">
-                <button className="btn btn-primary" onClick={() => loadSample('sample-statement-2.csv')}>Try sample · 60 rows</button>
-                <button className="btn" onClick={() => loadSample('sample-statement-1.csv')}>Try sample · 247 rows</button>
+                <button className="btn btn-primary" disabled={busy || askBusy} onClick={() => loadSample('sample-statement-2.csv')}>Try sample · 60 rows</button>
+                <button className="btn" disabled={busy || askBusy} onClick={() => loadSample('sample-statement-1.csv')}>Try sample · 247 rows</button>
                 <span className="or">or</span>
-                <DropZone dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
+                <DropZone disabled={busy || askBusy} dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
               </div>
               {loadErr && <p className="notice notice-warn" role="alert"><IconAlert size={16} /><span>{loadErr}</span></p>}
+              {/* Erase 後的說明（原本只畫在 source 卡片裡，Erase 後看不到） */}
+              {note && !loadErr && <p className="notice" role="status">{note}</p>}
               <p className="fine">Samples use fictional merchants. To check for yourself, open DevTools → Network before you classify: no request should appear while rows are categorized.</p>
             </section>
           ) : (
@@ -473,7 +507,7 @@ export default function App() {
                   </p>
                 </div>
                 <div className="source-actions">
-                  <DropZone compact dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
+                  <DropZone compact disabled={busy || askBusy} dragOver={dragOver} setDragOver={setDragOver} onFile={onFile} input={fileInput} />
                   <button ref={classifyBtn} className="btn btn-primary" disabled={busy || txs.length === 0} onClick={() => classify()}>
                     {busy ? 'Classifying…' : ready ? 'Classify again' : 'Classify on this device'}
                   </button>
@@ -710,7 +744,7 @@ export default function App() {
 
           <div className="zone-foot">
             <p className="fine">Corrections, the timeline, the outbound ledger and your last statement live only in this browser until you erase them.</p>
-            <button className="btn btn-danger" onClick={erase}>Erase all local data</button>
+            <button className="btn btn-danger" disabled={busy || askBusy} onClick={erase}>Erase all local data</button>
           </div>
         </main>
 
@@ -822,17 +856,18 @@ function SideTag({ side }: { side: Side }) {
   )
 }
 
-function DropZone({ compact, dragOver, setDragOver, onFile, input }: {
-  compact?: boolean; dragOver: boolean; setDragOver: (b: boolean) => void; onFile: (f: File | undefined) => void; input: RefObject<HTMLInputElement | null>
+/** disabled：分類中或等雲端回應時不能載入另一個檔（舊檔的類別會依 id 套到新檔的列上） */
+function DropZone({ compact, disabled, dragOver, setDragOver, onFile, input }: {
+  compact?: boolean; disabled?: boolean; dragOver: boolean; setDragOver: (b: boolean) => void; onFile: (f: File | undefined) => void; input: RefObject<HTMLInputElement | null>
 }) {
   return (
     <div
-      className={`drop ${compact ? 'drop-compact' : ''} ${dragOver ? 'is-over' : ''}`}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+      className={`drop ${compact ? 'drop-compact' : ''} ${dragOver && !disabled ? 'is-over' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragOver(true) }}
       onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => { e.preventDefault(); setDragOver(false); onFile(e.dataTransfer.files[0]) }}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!disabled) onFile(e.dataTransfer.files[0]) }}
     >
-      <button type="button" className="btn btn-quiet" onClick={() => input.current?.click()}>
+      <button type="button" className="btn btn-quiet" disabled={disabled} onClick={() => input.current?.click()}>
         <IconUpload size={16} /> {compact ? 'Load another CSV' : 'Choose your CSV'}
       </button>
       {!compact && <span className="drop-hint">or drop it here</span>}

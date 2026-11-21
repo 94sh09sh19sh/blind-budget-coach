@@ -5,6 +5,7 @@ import disclosureSrc from './disclosure.ts?raw'
 import routerSrc from './router.ts?raw'
 import loadcheckSrc from './loadcheck.ts?raw'
 import storeSrc from './store.ts?raw'
+import eraseSrc from './erasechannel.ts?raw'
 import indexHtml from '../../index.html?raw'
 import readme from '../../README.md?raw'
 
@@ -21,6 +22,7 @@ const UI_FILES: Array<[string, string]> = [
   ['router.ts', noComments(routerSrc)],
   ['loadcheck.ts', noComments(loadcheckSrc)],
   ['store.ts', noComments(storeSrc)],
+  ['erasechannel.ts', noComments(eraseSrc)],
   ['index.html', indexHtml],
 ]
 

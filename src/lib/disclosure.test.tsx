@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { appCheckDisclosure, appCheckMode, byteCountNote, cspNote } from './disclosure'
-import { buildPlanManifest } from './cloudtasks'
-import { ManifestDialog } from '../ui/ManifestDialog'
+import { buildAdviceManifest, buildPlanManifest } from './cloudtasks'
+import { ManifestDialog, QUESTION_AS_TYPED } from '../ui/ManifestDialog'
 
 describe('App Check 方式的判斷（與 firebase.ts 共用）', () => {
   it('有網站金鑰的正式建置是 recaptcha，不會是 debug', () => {
@@ -101,5 +101,17 @@ describe('出境清單對話框的輸出', () => {
     const h = html('off')
     expect(h).not.toContain('Also happens when you send')
     expect(h).not.toContain('gd-extra')
+  })
+  it('問答：右欄寫明問題原樣送出（問題裡打了商家名稱時，Not included 的 merchants 指的是對帳單）', () => {
+    const q = buildPlanManifest('How much did I spend at OAKWOOD APARTMENTS?', [{ name: 'Date', type: 'date' }], '2026-12-10', 60)
+    const h = renderToStaticMarkup(<ManifestDialog m={q} onSend={() => {}} onCancel={() => {}} cancelText="Don't send" appCheck="recaptcha" />)
+    expect(h).toContain('OAKWOOD APARTMENTS')
+    expect(h).toContain('Your question is sent as you typed it, including any merchant names, dates or amounts in it.')
+    expect(QUESTION_AS_TYPED).not.toMatch(/\bnever\b|guarantee/i)
+  })
+  it('預算建議：沒有問題文字，不加這一句', () => {
+    const a = buildAdviceManifest({ Groceries: 60, Dining: 40 }, 60)
+    const h = renderToStaticMarkup(<ManifestDialog m={a} onSend={() => {}} onCancel={() => {}} cancelText="Don't send" appCheck="recaptcha" />)
+    expect(h).not.toContain('Your question is sent as you typed it')
   })
 })

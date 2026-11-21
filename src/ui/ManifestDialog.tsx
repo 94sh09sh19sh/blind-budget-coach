@@ -13,6 +13,9 @@ if (typeof document !== 'undefined') {
   })
 }
 
+/** 問答的出境清單加的一句：問題原樣送出 */
+export const QUESTION_AS_TYPED = 'Your question is sent as you typed it, including any merchant names, dates or amounts in it.'
+
 export function ManifestDialog({ m, onSend, onCancel, cancelText, appCheck }: { m: Manifest; onSend: () => void; onCancel: () => void; cancelText: string; appCheck: AppCheckMode }) {
   const ref = useRef<HTMLDialogElement>(null)
   const noRef = useRef<HTMLButtonElement>(null)
@@ -70,6 +73,8 @@ export function ManifestDialog({ m, onSend, onCancel, cancelText, appCheck }: { 
             {kept.map((k) => <li key={k}>{k}</li>)}
           </ul>
           <p className="gd-keep-note">The answer comes back as a query plan or short text, and runs against your data here.</p>
+          {/* 問題是使用者自己打的，可能含商家、日期或金額：右欄的 Not included 指的是對帳單，不包括問題本身 */}
+          {m.mode === 'PREFER_IN_CLOUD' && <p className="gd-keep-note">{QUESTION_AS_TYPED}</p>}
         </section>
         {extra && (
           <section className="gd-extra" aria-label="Other network traffic when you send">

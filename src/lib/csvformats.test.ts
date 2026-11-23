@@ -100,7 +100,7 @@ describe('金額與日期的寫法', () => {
   })
 })
 
-// 對照組（找錯報告的 checked.test.ts）：修改前就正確的寫法，修改後也要照常
+// 對照組：修改前就正確的寫法，修改後也要照常
 describe('對照組：原本就讀得對的寫法', () => {
   it('分號、Tab、BOM、引號內逗號與換行、空列、CRLF', () => {
     const semi = load('﻿Date;Description;Amount\r\n2026-01-02;"CAFE; NORTH";-12.34\r\n\r\n2026-01-03;"LINE\nTWO";-1.00\r\n').txs

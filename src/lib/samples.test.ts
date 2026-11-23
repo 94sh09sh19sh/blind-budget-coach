@@ -9,7 +9,7 @@ import { EXAMPLE_QUESTIONS, matchByKeywords, patternToPlan, runPlan } from './pl
 import { classifyAll, type ClassifyEvent } from './ondevice'
 
 // 範例資料的鎖定測試：讀檔、規則分類、範例問題的結果、裝置端流程送進模型的字串，改程式時都不可以變。
-// 數字取自 2026-11-21 的 a62787a（與公開網址 11-19 部署的版本只差一行註解）。
+// 數字取自 2026-11-21 的 0af18a7（與公開網址 11-19 部署的版本只差一行註解）。
 
 /** 照 App.tsx 的流程：parseCsv → guessColumns → detectSign → toTransactions */
 function load(text: string) {

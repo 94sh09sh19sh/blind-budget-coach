@@ -1,4 +1,4 @@
-// 規則式的店家字串清理（當快取鍵用）。移植自 j1-probe 的 normalize.mjs，純 regex，不用模型。
+// 規則式的店家字串清理（當快取鍵用）。移植自投件期前寫的探測腳本 normalize.mjs，純 regex，不用模型。
 const CITY_STATE =
   /\b(SEATTLE WA|AUSTIN TX|NEW YORK NY|DENVER CO|CHICAGO IL|PORTLAND OR|BOSTON MA|ATLANTA GA|SAN JOSE CA|MIAMI FL)\b/g
 

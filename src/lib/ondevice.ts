@@ -1,4 +1,4 @@
-// 裝置端分類（經 Firebase AI Logic 的 ONLY_ON_DEVICE）。設定照 j1-probe 評測最佳組合：
+// 裝置端分類（經 Firebase AI Logic 的 ONLY_ON_DEVICE）。設定照投件期前評測的最佳組合：
 // 清理後店家字串去重快取、enum 結構化輸出、只留類別定義的系統提示。
 import { CATEGORIES, SYSTEM_PROMPT, isCategory, type Category } from './categories'
 import { normalizeDesc } from './normalize'

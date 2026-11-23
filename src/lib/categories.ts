@@ -1,4 +1,4 @@
-// 類別 enum 與系統提示，改自 j1-probe 評測用的提示（評測最佳設定：只留類別定義，不放範例）；已拿掉品牌名等字樣，不是逐字相同。
+// 類別 enum 與系統提示，改自投件期前評測腳本用的提示（評測最佳設定：只留類別定義，不放範例）；已拿掉品牌名等字樣，不是逐字相同。
 export const CATEGORIES = [
   'Groceries', 'Dining', 'Delivery', 'Transport', 'Utilities', 'Housing', 'Subscriptions',
   'Shopping', 'Health', 'Entertainment', 'Travel', 'Income', 'Transfers',

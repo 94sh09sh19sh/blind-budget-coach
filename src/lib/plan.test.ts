@@ -504,14 +504,26 @@ describe('askFixed：說明列寫出樣式；模型選的樣式沒帶類別、�
     expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 1366.32, count: 3 }])
     expect(logs[1].reason).toBe('The question names Transfers; the on-device pick (top spending categories) has no category.')
   })
-  it('模型的選擇有帶類別：照模型的，不覆蓋（與關鍵字不同也一樣）', async () => {
-    const { out, logs } = await ask('How much income did I get?', { pattern: 'category_total', category: 'Dining' })
-    expect(out.source).toBe('device')
-    expect(out.note).toBe(`Fixed pattern chosen on device: total spent on Dining. ${WHY}`)
-    expect(out.plan).toEqual({ filter: { categories: ['Dining'] }, aggregate: 'sum' })
-    expect(logs.map((l) => l.side)).toEqual(['device'])
+  it('模型的選擇用到的類別與問題點名的不同（問轉帳卻選 category_total 加 Income）：改用關鍵字，記兩列時間線', async () => {
+    const { out, logs } = await ask('How much did I transfer?', { pattern: 'category_total', category: 'Income' })
+    expect(out.source).toBe('rules')
+    expect(out.cached).toBe(false)
+    expect(out.note).toBe(`Fixed pattern chosen by keywords: total in Transfers. The question names Transfers and the on-device model picked total income. ${WHY}`)
+    expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 1366.32, count: 3 }])
+    expect(logs).toEqual([
+      { task: 'blind analysis: pick fixed pattern', mode: 'ONLY_ON_DEVICE', side: 'device', ms: 0, bytesSent: 0, reason: WHY },
+      { task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: 0, bytesSent: 0, reason: 'The question names Transfers; the on-device pick was total income.' },
+    ])
   })
-  it('模型的選擇有帶類別、與關鍵字相同：照模型的', async () => {
+  it('模型選的類別與問題點名的不同：category_average 與其他類別也一樣', async () => {
+    const { out } = await ask('How much income did I get?', { pattern: 'category_total', category: 'Dining' })
+    expect(out.source).toBe('rules')
+    expect(out.note).toBe(`Fixed pattern chosen by keywords: total income. The question names Income and the on-device model picked total spent on Dining. ${WHY}`)
+    const avg = await ask('What is my average purchase on Dining?', { pattern: 'category_average', category: 'Groceries' })
+    expect(avg.out.source).toBe('rules')
+    expect(avg.out.note).toBe(`Fixed pattern chosen by keywords: average purchase in Dining. The question names Dining and the on-device model picked average purchase in Groceries. ${WHY}`)
+  })
+  it('模型的選擇帶類別、與問題點名的類別相同：照模型的，不覆蓋', async () => {
     const { out, logs } = await ask('How much income did I get?', { pattern: 'category_total', category: 'Income' })
     expect(out.source).toBe('device')
     expect(out.note).toBe(`Fixed pattern chosen on device: total income. ${WHY}`)

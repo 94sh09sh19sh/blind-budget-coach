@@ -139,8 +139,8 @@ function callCloud(deps: AskDeps, cloud: CloudCall, req: CloudRequest): Promise<
 
 /**
  * 固定樣式：裝置端模型選（ONLY_ON_DEVICE）；沒有就用關鍵字比對。說明列都寫出選了哪個樣式。
- * 本機檢查：模型選的樣式沒用到類別，但問題裡有類別字眼（關鍵字比對得到帶類別的樣式）時，改用關鍵字的選擇。
- * 例如問收入時模型選了每月支出（常順手填 category: "Income"，但每月支出不會用它）。模型的選擇有用到類別時照模型的，不覆蓋。
+ * 本機檢查：問題裡有類別字眼（關鍵字比對得到帶類別的樣式），而模型選的樣式沒用到類別、或用到的是另一個類別時，改用關鍵字的選擇。
+ * 例如問收入時模型選了每月支出（常順手填 category: "Income"，但每月支出不會用它），或問轉帳時模型選了 Income 的總額。類別相同時照模型的。
  */
 export async function askFixed(session: AskSession, deps: AskDeps, question: string, why: string): Promise<AskOutcome> {
   const key = AskSession.key(question)
@@ -166,12 +166,18 @@ export async function askFixed(session: AskSession, deps: AskDeps, question: str
     deps.log({ task: 'blind analysis: pick fixed pattern', mode: 'ONLY_ON_DEVICE', side: 'device', ms: tm(deps) - t0, bytesSent: 0, reason: kwWhy })
     if (choice && plan) {
       const t1 = tm(deps)
-      const kw = usesCategory(choice) ? null : matchByKeywords(question)
+      const kw = matchByKeywords(question)
       const kwPlan = kw?.category ? patternToPlan(kw) : null
-      if (kw && kw.category && kwPlan) {
+      const noCategory = !usesCategory(choice)
+      // 問題用關鍵字點名了類別，而模型選的樣式沒用到類別、或用到的是另一個類別時，改用關鍵字的選擇；類別相同時照模型的
+      if (kw && kw.category && kwPlan && (noCategory || choice.category !== kw.category)) {
         // 模型確實被呼叫了，上面那一列照記；這裡另記一列本機規則的覆蓋
-        deps.log({ task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: tm(deps) - t1, bytesSent: 0, reason: `The question names ${kw.category}; the on-device pick (${describeChoice(choice)}) has no category.` })
-        out = { plan: kwPlan, source: 'rules', note: `Fixed pattern chosen by keywords: ${describeChoice(kw)}. The question names ${kw.category} and the on-device model picked a pattern without a category. ${why}`, cached: false }
+        const reason = noCategory
+          ? `The question names ${kw.category}; the on-device pick (${describeChoice(choice)}) has no category.`
+          : `The question names ${kw.category}; the on-device pick was ${describeChoice(choice)}.`
+        const picked = noCategory ? 'a pattern without a category' : describeChoice(choice)
+        deps.log({ task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: tm(deps) - t1, bytesSent: 0, reason })
+        out = { plan: kwPlan, source: 'rules', note: `Fixed pattern chosen by keywords: ${describeChoice(kw)}. The question names ${kw.category} and the on-device model picked ${picked}. ${why}`, cached: false }
       } else {
         out = { plan, source: 'device', note: `Fixed pattern chosen on device: ${describeChoice(choice)}. ${why}`, cached: false }
       }

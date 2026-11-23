@@ -237,6 +237,31 @@ export function patternToPlan(c: PatternChoice): QueryPlan | null {
   }
 }
 
+/**
+ * 這個選擇的答案有沒有用到類別。只有 category_total 與 category_average 會用類別篩選；
+ * 其他樣式即使模型多填了 category（實測常見：monthly_spend 帶 category: "Income"）也不會用到，所以不算。
+ */
+export function usesCategory(c: PatternChoice): boolean {
+  return (c.pattern === 'category_total' || c.pattern === 'category_average') && c.category !== undefined
+}
+
+/** 一小段英文，說明這個選擇答的是什麼（寫在答案的說明列，讓使用者看得出選了哪個樣式）。 */
+export function describeChoice(c: PatternChoice): string {
+  switch (c.pattern) {
+    case 'top_categories': return 'top spending categories'
+    case 'monthly_spend': return 'spending per month'
+    case 'top_merchants': return 'top merchants by spending'
+    case 'category_total': {
+      // 與 patternToPlan 同一順序：有類別就用類別，沒有才用商家文字
+      if (c.category) return c.category === 'Income' ? 'total income' : c.category === 'Transfers' ? 'total in Transfers' : `total spent on ${c.category}`
+      const text = c.text?.trim().slice(0, MAX_TEXT)
+      return text ? `total spent at "${text}"` : 'total spent'
+    }
+    case 'category_average': return c.category ? `average purchase in ${c.category}` : 'average purchase'
+    case 'count_over': return typeof c.amount === 'number' ? `purchases over ${c.amount}` : 'purchases over an amount'
+  }
+}
+
 const CAT_WORDS: [Category, RegExp][] = [
   ['Groceries', /grocer|supermarket/i], ['Dining', /dining|restaurant|eating out|cafe|coffee/i], ['Delivery', /deliver/i],
   ['Transport', /transport|taxi|rideshare|fuel|gas station|commut/i], ['Utilities', /utilit|electric|water bill|internet/i],

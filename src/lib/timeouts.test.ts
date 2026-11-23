@@ -38,7 +38,7 @@ describe('固定樣式的裝置端呼叫的等待上限', () => {
     const r = await askFixed(new AskSession(), deps, 'How much did I spend on Groceries?', 'Using a fixed pattern.')
     expect(r.source).toBe('rules')
     expect(r.plan).toEqual({ filter: { categories: ['Groceries'] }, aggregate: 'sum' })
-    expect(r.note).toBe('Fixed pattern chosen by keywords. The on-device model did not answer within 1 s. Using a fixed pattern.')
+    expect(r.note).toBe('Fixed pattern chosen by keywords: total spent on Groceries. The on-device model did not answer within 1 s. Using a fixed pattern.')
     expect(logs.map((l) => [l.side, l.reason])).toEqual([
       ['device', 'The on-device model did not answer within 1 s. Using a fixed pattern.'],
       ['rules', 'The on-device model did not answer within 1 s. Using a fixed pattern.'],
@@ -55,7 +55,7 @@ describe('固定樣式的裝置端呼叫的等待上限', () => {
     const { deps, logs } = mk(async () => JSON.stringify({ pattern: 'monthly_spend' }))
     const r = await askFixed(new AskSession(), deps, 'How much do I spend each month?', 'Using a fixed pattern.')
     expect(r.source).toBe('device')
-    expect(r.note).toBe('Fixed pattern chosen on device. Using a fixed pattern.')
+    expect(r.note).toBe('Fixed pattern chosen on device: spending per month. Using a fixed pattern.')
     expect(logs.map((l) => l.reason)).toEqual(['Using a fixed pattern.'])
   })
 })

@@ -360,6 +360,8 @@ export default function App() {
     epoch.current++
     setOverrides({}); setTimeline([]); setLedger([]); setCats(new Map()); setRestored([]); setCsv(null); setEngine(null); setProg(null)
     setAnswer(null); setAdvice(null); setPending(null); setFileName(''); setIsRestored(false); setLoadErr(null); session.current = new AskSession(); setCloudUsed(0)
+    // 問題輸入框的文字也清掉（只在記憶體裡，但清除後畫面上不該還留著上一題）
+    setQuestion('')
     setNote(message)
   }
   async function erase() {

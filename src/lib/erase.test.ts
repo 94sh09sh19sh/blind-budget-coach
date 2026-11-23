@@ -44,6 +44,12 @@ describe('App.tsx 的接法', () => {
     // 拖放也擋
     expect(appSrc).toContain('if (!disabled) onFile(e.dataTransfer.files[0])')
   })
+  it('清除畫面資料時連問題輸入框的文字一起清掉（本分頁 Erase 與別的分頁通知都走 clearTab）', () => {
+    const clearTab = appSrc.slice(appSrc.indexOf('function clearTab('), appSrc.indexOf('async function erase()'))
+    expect(clearTab).toContain("setQuestion('')")
+    const erase = appSrc.slice(appSrc.indexOf('async function erase()'), appSrc.indexOf('// 別的分頁按了 Erase'))
+    expect(erase).toContain('clearTab(')
+  })
   it('Erase 會通知其他分頁；收到通知的分頁清掉記憶體裡的資料', () => {
     expect(appSrc).toContain('eraseChan.current?.notify()')
     expect(appSrc).toContain('openEraseChannel(() => clearTab(ERASED_ELSEWHERE))')

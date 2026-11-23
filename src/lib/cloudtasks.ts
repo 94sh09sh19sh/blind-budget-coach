@@ -2,7 +2,7 @@
 // 雲端呼叫與裝置端選樣式都是注入的函式；本檔不碰 SDK，單元測試用假的回應。
 import { CATEGORIES } from './categories'
 import { requestBytes, type CloudCall, type CloudMode, type CloudRequest, type CloudResult } from './ai'
-import { PLAN_SCHEMA, matchByKeywords, patternToPlan, validateChoice, validatePlan, type PatternChoice, type QueryPlan } from './plan'
+import { PLAN_SCHEMA, describeChoice, matchByKeywords, patternToPlan, usesCategory, validateChoice, validatePlan, type PatternChoice, type QueryPlan } from './plan'
 import type { Side, TimelineEntry } from './router'
 
 export interface ColumnInfo { name: string; type: 'date' | 'text' | 'number' }
@@ -137,7 +137,11 @@ function callCloud(deps: AskDeps, cloud: CloudCall, req: CloudRequest): Promise<
   })
 }
 
-/** 固定樣式：裝置端模型選（ONLY_ON_DEVICE）；沒有就用關鍵字比對。 */
+/**
+ * 固定樣式：裝置端模型選（ONLY_ON_DEVICE）；沒有就用關鍵字比對。說明列都寫出選了哪個樣式。
+ * 本機檢查：模型選的樣式沒用到類別，但問題裡有類別字眼（關鍵字比對得到帶類別的樣式）時，改用關鍵字的選擇。
+ * 例如問收入時模型選了每月支出（常順手填 category: "Income"，但每月支出不會用它）。模型的選擇有用到類別時照模型的，不覆蓋。
+ */
 export async function askFixed(session: AskSession, deps: AskDeps, question: string, why: string): Promise<AskOutcome> {
   const key = AskSession.key(question)
   // 固定樣式結果連同「為什麼用固定樣式」一起當鍵：雲端失敗退回時，不能顯示先前『選了不送』的說明
@@ -160,15 +164,26 @@ export async function askFixed(session: AskSession, deps: AskDeps, question: str
     if (timedOut) kwWhy = `The on-device model did not answer within ${Math.round(limit / 1000)} s. ${why}`
     const plan = choice ? patternToPlan(choice) : null
     deps.log({ task: 'blind analysis: pick fixed pattern', mode: 'ONLY_ON_DEVICE', side: 'device', ms: tm(deps) - t0, bytesSent: 0, reason: kwWhy })
-    if (plan) out = { plan, source: 'device', note: `Fixed pattern chosen on device. ${why}`, cached: false }
+    if (choice && plan) {
+      const t1 = tm(deps)
+      const kw = usesCategory(choice) ? null : matchByKeywords(question)
+      const kwPlan = kw?.category ? patternToPlan(kw) : null
+      if (kw && kw.category && kwPlan) {
+        // 模型確實被呼叫了，上面那一列照記；這裡另記一列本機規則的覆蓋
+        deps.log({ task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: tm(deps) - t1, bytesSent: 0, reason: `The question names ${kw.category}; the on-device pick (${describeChoice(choice)}) has no category.` })
+        out = { plan: kwPlan, source: 'rules', note: `Fixed pattern chosen by keywords: ${describeChoice(kw)}. The question names ${kw.category} and the on-device model picked a pattern without a category. ${why}`, cached: false }
+      } else {
+        out = { plan, source: 'device', note: `Fixed pattern chosen on device: ${describeChoice(choice)}. ${why}`, cached: false }
+      }
+    }
   }
   if (!out) {
     const t0 = tm(deps)
     const choice = matchByKeywords(question)
     const plan = choice ? patternToPlan(choice) : null
     deps.log({ task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: tm(deps) - t0, bytesSent: 0, reason: kwWhy })
-    out = plan
-      ? { plan, source: 'rules', note: `Fixed pattern chosen by keywords. ${kwWhy}`, cached: false }
+    out = choice && plan
+      ? { plan, source: 'rules', note: `Fixed pattern chosen by keywords: ${describeChoice(choice)}. ${kwWhy}`, cached: false }
       : { plan: null, source: 'none', note: 'Could not map that question to one of the six fixed patterns. Try an example question.', cached: false }
   }
   if (out.plan) session.fixedCache.set(fkey, out)

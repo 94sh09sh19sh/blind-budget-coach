@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXAMPLE_QUESTIONS, isoDate, matchByKeywords, patternToPlan, runPlan, validateChoice, validatePlan } from './plan'
+import { EXAMPLE_QUESTIONS, describeChoice, isoDate, matchByKeywords, patternToPlan, runPlan, usesCategory, validateChoice, validatePlan } from './plan'
 import { AskSession, MAX_CLOUD_CALLS, describeCloudError, askAdvice, askCloud, askFixed, buildAdviceManifest, buildPlanManifest, categoryShares, limitReached, localDate, validateAdvice } from './cloudtasks'
 import appSrc from '../App.tsx?raw'
 import type { Classified } from './aggregate'
@@ -369,7 +369,7 @@ describe('askCloud', () => {
     s.cloudCalls = MAX_CLOUD_CALLS
     expect(limitReached(s)).toBe(true)
     const r = await askCloud(s, deps, 'top categories please', m)
-    expect(r.note).toBe('Fixed pattern chosen by keywords. The limit of 10 cloud calls per page load was reached; using a fixed pattern.')
+    expect(r.note).toBe('Fixed pattern chosen by keywords: top spending categories. The limit of 10 cloud calls per page load was reached; using a fixed pattern.')
     expect(await askAdvice(s, deps, buildAdviceManifest({ Groceries: 60, Dining: 40 }, 10))).toEqual({ ok: false, error: 'The limit of 10 cloud calls per page load was reached.' })
   })
   it('App.tsx：到上限時不開出境清單、預算建議按鈕停用並寫原因', () => {
@@ -401,6 +401,165 @@ describe('askCloud', () => {
     const r = await askFixed(new AskSession(), deps, 'tell me a joke', 'x')
     expect(r.plan).toBeNull()
     expect(r.source).toBe('none')
+  })
+})
+
+describe('usesCategory：答案有沒有用到類別', () => {
+  it('只有 category_total 與 category_average 帶類別才算', () => {
+    expect(usesCategory({ pattern: 'category_total', category: 'Income' })).toBe(true)
+    expect(usesCategory({ pattern: 'category_average', category: 'Dining' })).toBe(true)
+  })
+  it('沒帶類別、只有商家文字、或是不用類別的樣式（即使多填了 category）都不算', () => {
+    expect(usesCategory({ pattern: 'category_total', text: 'Joes Diner' })).toBe(false)
+    expect(usesCategory({ pattern: 'monthly_spend' })).toBe(false)
+    expect(usesCategory({ pattern: 'monthly_spend', category: 'Income' })).toBe(false)
+    expect(usesCategory({ pattern: 'top_categories', category: 'Transfers' })).toBe(false)
+    expect(usesCategory({ pattern: 'top_merchants', category: 'Dining' })).toBe(false)
+    expect(usesCategory({ pattern: 'count_over', amount: 100, category: 'Dining' })).toBe(false)
+  })
+})
+
+describe('describeChoice：說明這個選擇答的是什麼', () => {
+  it('不帶參數的三個樣式', () => {
+    expect(describeChoice({ pattern: 'top_categories' })).toBe('top spending categories')
+    expect(describeChoice({ pattern: 'monthly_spend' })).toBe('spending per month')
+    expect(describeChoice({ pattern: 'top_merchants' })).toBe('top merchants by spending')
+  })
+  it('category_total：Income、Transfers、其他類別', () => {
+    expect(describeChoice({ pattern: 'category_total', category: 'Income' })).toBe('total income')
+    expect(describeChoice({ pattern: 'category_total', category: 'Transfers' })).toBe('total in Transfers')
+    expect(describeChoice({ pattern: 'category_total', category: 'Groceries' })).toBe('total spent on Groceries')
+  })
+  it('category_total：用商家文字時加引號；有類別時以類別為準（與 patternToPlan 一致）', () => {
+    expect(describeChoice({ pattern: 'category_total', text: 'Joes Diner' })).toBe('total spent at "Joes Diner"')
+    expect(describeChoice({ pattern: 'category_total', text: '  Joes Diner ' })).toBe('total spent at "Joes Diner"')
+    expect(describeChoice({ pattern: 'category_total', category: 'Dining', text: 'Joes Diner' })).toBe('total spent on Dining')
+  })
+  it('category_average 與 count_over', () => {
+    expect(describeChoice({ pattern: 'category_average', category: 'Dining' })).toBe('average purchase in Dining')
+    expect(describeChoice({ pattern: 'count_over', amount: 100 })).toBe('purchases over 100')
+    expect(describeChoice({ pattern: 'count_over', amount: 250.5 })).toBe('purchases over 250.5')
+  })
+  it('缺參數的選擇（validateChoice 不會放行，只是不丟錯）', () => {
+    expect(describeChoice({ pattern: 'category_total' })).toBe('total spent')
+    expect(describeChoice({ pattern: 'category_average' })).toBe('average purchase')
+    expect(describeChoice({ pattern: 'count_over' })).toBe('purchases over an amount')
+  })
+  it('六個範例問題的關鍵字選擇各有不同的說明', () => {
+    expect(EXAMPLE_QUESTIONS.map((q) => describeChoice(matchByKeywords(q)!))).toEqual([
+      'top spending categories', 'spending per month', 'top merchants by spending', 'total spent on Groceries', 'average purchase in Dining', 'purchases over 100',
+    ])
+  })
+})
+
+describe('askFixed：說明列寫出樣式；模型選的樣式沒帶類別、問題卻有類別字眼時改用關鍵字', () => {
+  const p = parseCsv(sample60)
+  const cols = guessColumns(p.headers)
+  const data: Classified[] = toTransactions(p, cols, detectSign(p, cols)).map((t) => ({ ...t, category: classifyByRules(t.desc) }))
+  const WHY = 'You chose not to send anything; using a fixed pattern.'
+  const ask = (q: string, device?: object | string) => {
+    const { deps, logs } = mkDeps(device === undefined ? {} : { deviceChoose: async () => (typeof device === 'string' ? device : JSON.stringify(device)) })
+    return askFixed(new AskSession(), deps, q, WHY).then((out) => ({ out, logs }))
+  }
+
+  it('沒有裝置端模型：關鍵字選的，說明列寫出樣式', async () => {
+    const { out, logs } = await ask('How much income did I get?')
+    expect(out.source).toBe('rules')
+    expect(out.note).toBe(`Fixed pattern chosen by keywords: total income. ${WHY}`)
+    expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 4577.49, count: 2 }])
+    expect(logs.map((l) => [l.mode, l.side, l.reason])).toEqual([['LOCAL_RULES', 'rules', WHY]])
+  })
+  for (const q of ['How much income did I get?', 'What is my total income?', 'How much salary did I receive?']) {
+    it(`模型選 monthly_spend、問題是「${q}」：改用關鍵字，記兩列時間線`, async () => {
+      const { out, logs } = await ask(q, { pattern: 'monthly_spend' })
+      expect(out.source).toBe('rules')
+      expect(out.cached).toBe(false)
+      expect(out.note).toBe(`Fixed pattern chosen by keywords: total income. The question names Income and the on-device model picked a pattern without a category. ${WHY}`)
+      expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 4577.49, count: 2 }])
+      // 模型確實被呼叫了，那一列照原樣記；再多一列本機規則
+      expect(logs).toEqual([
+        { task: 'blind analysis: pick fixed pattern', mode: 'ONLY_ON_DEVICE', side: 'device', ms: 0, bytesSent: 0, reason: WHY },
+        { task: 'blind analysis: keyword match', mode: 'LOCAL_RULES', side: 'rules', ms: 0, bytesSent: 0, reason: 'The question names Income; the on-device pick (spending per month) has no category.' },
+      ])
+    })
+  }
+  it('模型選 monthly_spend 卻順手填了 category: Income（本機實測模型常這樣回）：樣式不用類別，照樣改用關鍵字', async () => {
+    const { out, logs } = await ask('How much income did I get?', '{"pattern": "monthly_spend", "category": "Income", "amount": 0, "text": ""}')
+    expect(out.source).toBe('rules')
+    expect(out.note).toBe(`Fixed pattern chosen by keywords: total income. The question names Income and the on-device model picked a pattern without a category. ${WHY}`)
+    expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 4577.49, count: 2 }])
+    expect(logs.map((l) => `${l.mode}/${l.side}`)).toEqual(['ONLY_ON_DEVICE/device', 'LOCAL_RULES/rules'])
+    expect(logs[1].reason).toBe('The question names Income; the on-device pick (spending per month) has no category.')
+  })
+  it('模型選 monthly_spend 並把類別填錯（問轉帳卻填 Income）：照樣改用關鍵字的 Transfers', async () => {
+    const { out } = await ask('How much did I transfer?', { pattern: 'monthly_spend', category: 'Income', amount: 0, text: '' })
+    expect(out.source).toBe('rules')
+    expect(out.note).toContain('Fixed pattern chosen by keywords: total in Transfers.')
+    expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 1366.32, count: 3 }])
+  })
+  it('模型選 top_categories、問轉帳：改用關鍵字，Transfers 合計 1,366.32', async () => {
+    const { out, logs } = await ask('How much did I transfer?', { pattern: 'top_categories' })
+    expect(out.source).toBe('rules')
+    expect(out.note).toContain('Fixed pattern chosen by keywords: total in Transfers. The question names Transfers')
+    expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 1366.32, count: 3 }])
+    expect(logs[1].reason).toBe('The question names Transfers; the on-device pick (top spending categories) has no category.')
+  })
+  it('模型的選擇有帶類別：照模型的，不覆蓋（與關鍵字不同也一樣）', async () => {
+    const { out, logs } = await ask('How much income did I get?', { pattern: 'category_total', category: 'Dining' })
+    expect(out.source).toBe('device')
+    expect(out.note).toBe(`Fixed pattern chosen on device: total spent on Dining. ${WHY}`)
+    expect(out.plan).toEqual({ filter: { categories: ['Dining'] }, aggregate: 'sum' })
+    expect(logs.map((l) => l.side)).toEqual(['device'])
+  })
+  it('模型的選擇有帶類別、與關鍵字相同：照模型的', async () => {
+    const { out, logs } = await ask('How much income did I get?', { pattern: 'category_total', category: 'Income' })
+    expect(out.source).toBe('device')
+    expect(out.note).toBe(`Fixed pattern chosen on device: total income. ${WHY}`)
+    expect(runPlan(out.plan!, data).rows).toEqual([{ label: 'Total', value: 4577.49, count: 2 }])
+    expect(logs.map((l) => l.side)).toEqual(['device'])
+  })
+  it('模型沒帶類別、問題也沒有類別字眼：照模型的', async () => {
+    const { out, logs } = await ask('How much do I spend each month?', { pattern: 'monthly_spend' })
+    expect(out.source).toBe('device')
+    expect(out.note).toBe(`Fixed pattern chosen on device: spending per month. ${WHY}`)
+    expect(logs.map((l) => l.side)).toEqual(['device'])
+  })
+  it('模型用商家文字、關鍵字也只比到商家文字（沒有類別）：照模型的', async () => {
+    const { out } = await ask('How much did I spend at Joes Diner?', { pattern: 'category_total', text: 'Joes Diner' })
+    expect(out.source).toBe('device')
+    expect(out.note).toBe(`Fixed pattern chosen on device: total spent at "Joes Diner". ${WHY}`)
+  })
+  it('模型沒帶類別、關鍵字比不到：照模型的', async () => {
+    const { out, logs } = await ask('What did I buy on my birthday?', { pattern: 'top_merchants' })
+    expect(out.source).toBe('device')
+    expect(out.note).toBe(`Fixed pattern chosen on device: top merchants by spending. ${WHY}`)
+    expect(logs.map((l) => l.side)).toEqual(['device'])
+  })
+  it('模型回的不是合法選擇：退回關鍵字，說明列也寫出樣式', async () => {
+    const { out, logs } = await ask('How much income did I get?', 'not json')
+    expect(out.source).toBe('rules')
+    expect(out.note).toBe(`Fixed pattern chosen by keywords: total income. ${WHY}`)
+    expect(logs.map((l) => l.side)).toEqual(['device', 'rules'])
+    expect(logs[1].reason).toBe(WHY)
+  })
+  it('改用關鍵字的結果進固定樣式快取：同一題再問回傳同一句說明並標示已快取', async () => {
+    const { deps } = mkDeps({ deviceChoose: async () => JSON.stringify({ pattern: 'monthly_spend' }) })
+    const s = new AskSession()
+    const first = await askFixed(s, deps, 'How much income did I get?', WHY)
+    const second = await askFixed(s, deps, 'how much income did I get?', WHY)
+    expect(second.cached).toBe(true)
+    expect(second.note).toBe(first.note)
+    expect(second.source).toBe('rules')
+  })
+  it('雲端失敗退回固定樣式時也一樣：裝置端選了沒類別的樣式、問題有類別，就改用關鍵字', async () => {
+    const cloud: CloudCall = async () => { throw new Error('offline') }
+    const { deps, logs } = mkDeps({ cloud, deviceChoose: async () => JSON.stringify({ pattern: 'monthly_spend' }) })
+    const q = 'How much income did I get?'
+    const r = await askCloud(new AskSession(), deps, q, buildPlanManifest(q, COLS, '2026-11-23', 60))
+    expect(r.source).toBe('rules')
+    expect(r.note).toContain('Fixed pattern chosen by keywords: total income. The question names Income')
+    expect(r.note).toContain('The cloud call failed')
+    expect(logs.map((l) => `${l.mode}/${l.side}`)).toEqual(['PREFER_IN_CLOUD/cloud', 'ONLY_ON_DEVICE/device', 'LOCAL_RULES/rules'])
   })
 })
 
